@@ -1,0 +1,62 @@
+# ---------------------------------------------------------------------------
+# WekaPolicy: ensure-nics -- REQUIRED ON AWS, and easy to miss
+# ---------------------------------------------------------------------------
+# Apply this BEFORE (or alongside) the WekaClient. Without it the client pod
+# stays Pending forever with:
+#
+#   0/1 nodes are available: 1 Insufficient weka.io/weka-nics
+#
+# WHY IT EXISTS:
+#
+# The WEKA client's data path is DPDK -- it binds network interfaces directly
+# from userspace, bypassing the kernel. It therefore needs its OWN dedicated
+# NICs, separate from the interface the kubelet and the VPC CNI are using. It
+# cannot share the node's primary ENI.
+#
+# On AWS those extra NICs are additional ENIs that must be attached to the
+# instance. Nothing in Terraform does this: the node group creates an instance
+# with one ENI, and the VPC CNI manages further ENIs for POD IPs -- not for
+# WEKA. This policy is what attaches the data-path ENIs and then advertises
+# them to the scheduler as the extended resource `weka.io/weka-nics`, which is
+# what the WekaClient pod requests.
+#
+# So the chain is:
+#
+#   this policy -> operator attaches N ENIs to each matching node
+#               -> node advertises weka.io/weka-nics: N
+#               -> the WekaClient pod can finally be scheduled
+#
+# NOTE the instance type limit: an m6i.8xlarge supports 8 ENIs total, and the
+# VPC CNI is already using some for pod IPs. Asking for more data NICs than
+# the instance type allows leaves ENIs unattached and the pod Pending with the
+# same message -- check the "Network Interfaces" column in the AWS instance
+# type docs before raising dataNICsNumber.
+---
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaPolicy
+metadata:
+  name: ensure-nics-policy
+  namespace: weka-operator-system
+spec:
+  type: "ensure-nics"
+
+  # Keep this on the same release as the WekaClient and the backend cluster.
+  image: "quay.io/weka.io/weka-in-container:4.4.37"
+  imagePullSecret: "quay-io-robot-secret"
+
+  payload:
+    ensureNICsPayload:
+      # Cloud provider whose API is used to attach the interfaces.
+      type: aws
+
+      # The SAME label the WekaClient selects on. If these diverge you get
+      # NICs attached to nodes with no client, or a client on a node with no
+      # NICs -- the latter being the Pending case above.
+      nodeSelector:
+        weka.io/supports-clients: "true"
+
+      # One data NIC per WEKA core. This MUST be >= the WekaClient's
+      # `coresNum`, because the client pod requests
+      # `weka.io/weka-nics: <coresNum>`. Keep it in step with coresNum in
+      # 03-weka-client.yaml and client_weka_cores in terraform.tfvars.
+      dataNICsNumber: 4

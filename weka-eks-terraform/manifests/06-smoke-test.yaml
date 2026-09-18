@@ -1,0 +1,80 @@
+# ---------------------------------------------------------------------------
+# Smoke test: does the whole path actually work?
+# ---------------------------------------------------------------------------
+# Apply last. This exercises every piece in turn, and each stage fails in a
+# distinguishable way:
+#
+#   PVC Bound        -> the CSI controller reached the WEKA API on 14000 and
+#                       created a directory with a quota. Validates
+#                       04-csi-api-secret.yaml and 05-storageclass-dir.yaml.
+#   Pod Running      -> the CSI node plugin mounted it through the WEKA client
+#                       on that node. Validates 01, 02, the node user data,
+#                       and the security group.
+#   Log lines appear -> reads and writes traverse the WEKA data path.
+#
+#   kubectl get pvc weka-smoke-test-pvc
+#   kubectl logs -f weka-smoke-test
+#
+# Clean up with: kubectl delete -f 06-smoke-test.yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: weka-smoke-test-pvc
+spec:
+  # ReadWriteMany on purpose. This is the point of a shared parallel
+  # filesystem, and it is also a real test: RWX means the CSI plugin published
+  # the volume through the WEKA client rather than doing something
+  # block-device-shaped that happens to work for one pod. Scale the pod below
+  # to a Deployment with 3 replicas across nodes and they all write to the
+  # same file.
+  accessModes:
+    - ReadWriteMany
+  storageClassName: weka-dir
+  resources:
+    requests:
+      # With capacityEnforcement: HARD this is a real quota on the WEKA
+      # directory, not a hint. Writes past 1Gi will fail with ENOSPC.
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: weka-smoke-test
+spec:
+  # No nodeSelector here deliberately. Any node in the weka_clients group can
+  # mount this, and letting the scheduler choose freely means a successful
+  # mount proves the client and CSI plugin landed on ALL of them -- not just
+  # the one you pinned to.
+  restartPolicy: Never
+  containers:
+    - name: writer
+      image: public.ecr.aws/docker/library/busybox:1.36
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "mounted filesystem:"
+          df -hT /data
+          echo
+          echo "appending 20 timestamps to /data/heartbeat.log"
+          i=0
+          while [ "$i" -lt 20 ]; do
+            echo "$(date -Iseconds) written by $(hostname)" >> /data/heartbeat.log
+            i=$((i + 1))
+            sleep 1
+          done
+          echo
+          echo "last 5 lines of /data/heartbeat.log:"
+          tail -5 /data/heartbeat.log
+          echo
+          echo "total lines: $(wc -l < /data/heartbeat.log)"
+          echo "SMOKE TEST PASSED"
+      volumeMounts:
+        - name: weka
+          mountPath: /data
+  volumes:
+    - name: weka
+      persistentVolumeClaim:
+        claimName: weka-smoke-test-pvc

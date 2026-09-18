@@ -1,0 +1,129 @@
+# ===========================================================================
+# Secrets and local environment
+# ===========================================================================
+# .env holds the get.weka.io token and Quay credentials. .env.example is the
+# tracked template -- the negations below keep it visible while everything
+# else in the family stays out.
+.env
+.env.*
+!.env.example
+.envrc
+
+# direnv / tool-version shims that commonly hold exports
+.direnv/
+
+# ===========================================================================
+# Terraform
+# ===========================================================================
+# State contains the WEKA admin password secret id, every subnet id, and every
+# attribute of every resource. It is not encrypted. Never commit it.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.tfstate.lock.info
+
+# NOTE: .terraform.lock.hcl is deliberately NOT ignored -- the provider lock
+# file SHOULD be committed so everyone resolves the same provider versions.
+.terraform.lock.hcl.bak
+
+# Variable files hold the get.weka.io token. The .example files are safe.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Plan files are state deltas holding every resource attribute, including
+# values of variables marked `sensitive`. A saved plan is a compressed archive
+# so the secrets are not greppable with `strings`, but `terraform show
+# tfplan.bin` prints them, which is the part that matters.
+#
+# The glob has to be this wide. `tfplan` and `tfplan.*` alone do NOT match
+# `tfplan2.bin`, which is exactly the kind of name you end up with while
+# iterating on a broken apply -- and it sails straight into `git add -A`.
+*.tfplan
+*.tfplan.*
+tfplan*
+*plan.bin
+*.plan
+
+# Terraform's local override convention: these are for machine-specific
+# experiments and are never meant to be shared.
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI configuration can contain registry credentials.
+.terraformrc
+terraform.rc
+
+crash.log
+crash.*.log
+
+# ===========================================================================
+# Kubernetes
+# ===========================================================================
+# `aws eks update-kubeconfig` writes a kubeconfig; exported ones can carry
+# bearer tokens and client certificates.
+kubeconfig
+kubeconfig*
+*.kubeconfig
+.kube/
+
+# Rendered secret manifests. Only the .example templates belong in git.
+#
+# `**/` matters: this .gitignore sits at the repo root, and a pattern with a
+# slash in it is anchored to the directory containing the .gitignore. Plain
+# `manifests/...` would match only ./manifests/... and would NOT match
+# weka-eks-terraform/manifests/... -- which is where these files actually are.
+**/manifests/01-weka-client-secret.yaml
+**/manifests/04-csi-api-secret.yaml
+
+# Belt and braces: anything else that ends up looking like a rendered secret.
+*-secret.yaml
+!*-secret.yaml.example
+
+# `helm pull --untar` drops the operator chart here at install time.
+**/manifests/weka-operator/
+*.tgz
+
+# ===========================================================================
+# Credentials and keys
+# ===========================================================================
+# The WEKA module writes a generated private key to /tmp, but people copy it
+# into the repo to keep it with the cluster it belongs to.
+*.pem
+*.key
+*.p12
+*.pfx
+*.ppk
+id_rsa
+id_rsa.*
+id_ed25519
+id_ed25519.*
+*.pub
+!*.pub.example
+
+# AWS
+.aws/
+credentials
+
+# ===========================================================================
+# Tooling
+# ===========================================================================
+# Claude Code: settings.json is shareable project config, settings.local.json
+# is per-developer and is not.
+.claude/settings.local.json
+
+# ===========================================================================
+# Editor / OS noise
+# ===========================================================================
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/

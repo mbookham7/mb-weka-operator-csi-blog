@@ -1,0 +1,118 @@
+# ---------------------------------------------------------------------------
+# WekaClient -- runs the WEKA client container on every eligible EKS node
+# ---------------------------------------------------------------------------
+# The operator watches this resource and, for each node matching nodeSelector,
+# schedules a weka-in-container pod that joins the external WEKA cluster as a
+# stateless client and exposes the mount to the CSI node plugin.
+#
+# Apply AFTER 01-weka-client-secret.yaml.
+---
+apiVersion: weka.weka.io/v1alpha1
+kind: WekaClient
+metadata:
+  name: weka-eks-clients
+  namespace: weka-operator-system
+spec:
+  # ------------------------------------------------------------------------
+  # Image
+  # ------------------------------------------------------------------------
+  # The client container version must match the WEKA release on the backend
+  # cluster -- this tag is deliberately the same 4.4.37 as `weka_version` in
+  # terraform.tfvars. Verify a tag exists before applying:
+  #
+  #   curl -so /dev/null -w '%{http_code}' -H "Authorization: Bearer <tok>" \
+  #     https://quay.io/v2/weka.io/weka-in-container/manifests/<tag>
+  #
+  # The older `-k8s.N` suffix (e.g. 4.4.5.118-k8s.4) was dropped after the
+  # 4.4.5 line; later releases are plain version tags.
+  image: "quay.io/weka.io/weka-in-container:4.4.37"
+
+  # Pull secret created by 00-namespace-and-secrets.sh. Separate from the
+  # chart-wide `imagePullSecret` Helm value, which only covers operator pods.
+  imagePullSecret: "quay-io-robot-secret"
+
+  # ------------------------------------------------------------------------
+  # Credentials
+  # ------------------------------------------------------------------------
+  # Name of the Secret from 01-weka-client-secret.yaml, in this namespace.
+  # This is a plain string, not an object reference.
+  wekaSecretRef: "weka-client-secret"
+
+  # ------------------------------------------------------------------------
+  # Joining an EXTERNAL cluster
+  # ------------------------------------------------------------------------
+  # joinIpPorts, NOT targetCluster.
+  #
+  # `targetCluster` is a reference to a WekaCluster custom resource -- an
+  # in-cluster WEKA deployment that this same operator manages. Our backends
+  # were built by Terraform and the operator knows nothing about them, so
+  # there is no WekaCluster object to point at. joinIpPorts is the external
+  # backend form: management endpoints, in <ip>:14000 form.
+  #
+  # Get the IPs from Terraform:
+  #     terraform output -raw weka_backend_ips_command | bash
+  #
+  # List several. These are autoscaling-group instances that the WEKA module's
+  # healing Lambdas will replace, so any single IP is temporary; giving the
+  # client three means a join still succeeds after one backend is recycled.
+  joinIpPorts:
+    - "10.60.0.11:14000"   # REPLACE: real backend IPs from step 3
+    - "10.60.0.12:14000"   # REPLACE
+    - "10.60.0.13:14000"   # REPLACE
+
+  # ------------------------------------------------------------------------
+  # Node selection
+  # ------------------------------------------------------------------------
+  # Set by the EKS managed node group in eks.tf. This label is the contract
+  # between Terraform and Kubernetes: only nodes whose user data configured
+  # HugePages, the static CPU manager policy and /opt/k8s-weka carry it, so
+  # only those nodes ever get a client container.
+  #
+  # The CSI node plugin must select on the SAME label. If they diverge, you get
+  # nodes with a WEKA client and no CSI plugin (volumes provision but never
+  # mount) or the reverse (mount attempts on a node with no client).
+  nodeSelector:
+    weka.io/supports-clients: "true"
+
+  # ------------------------------------------------------------------------
+  # Ports
+  # ------------------------------------------------------------------------
+  # The client allocates its ports starting here. 46000 sits inside the
+  # 45000-47000 block reserved via net.ipv4.ip_local_reserved_ports in
+  # node-userdata.tf, so the kernel will not hand any of these ports out as an
+  # ephemeral port to another process before WEKA binds them.
+  #
+  # Change this and you must change the reserved range in Terraform to match,
+  # or you reintroduce exactly the race that reservation exists to prevent.
+  portRange:
+    basePort: 46000
+
+  # ------------------------------------------------------------------------
+  # Kernel driver
+  # ------------------------------------------------------------------------
+  # Where to fetch a prebuilt WEKA kernel driver matching the node's running
+  # kernel. The node user data installs kernel-devel/kernel-headers so the
+  # driver CAN be built locally, but AL2023 AMIs regularly run a kernel whose
+  # headers are no longer in the mirror. This is the fallback that keeps node
+  # provisioning from depending on that.
+  #
+  # Requires egress to the internet -- provided by the NAT gateway in
+  # network.tf. In an air-gapped VPC you host this service yourself.
+  driversDistService: "https://drivers.weka.io"
+
+  # ------------------------------------------------------------------------
+  # Cores
+  # ------------------------------------------------------------------------
+  # MUST AGREE WITH TERRAFORM. `client_weka_cores` in terraform.tfvars drives
+  # the HugePages reservation in node-userdata.tf as
+  #
+  #     nr_hugepages = coresNum x 1.5 GiB / 2 MiB
+  #
+  # Raise coresNum here without raising it there and the container cannot get
+  # the hugepage memory it needs -- the pod stays Pending on hugepages-2Mi, or
+  # starts and fails to initialise its data path. Lower it here and you have
+  # stranded memory on every node that nothing can ever use.
+  #
+  # These cores are pinned and poll at 100%. On a 32-vCPU m6i.8xlarge, 4 cores
+  # is ~12% of the node handed permanently to storage.
+  coresNum: 4

@@ -1,0 +1,107 @@
+# ---------------------------------------------------------------------------
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+# ---------------------------------------------------------------------------
+
+# The get.weka.io token is REQUIRED, but it belongs in .env rather than here:
+#
+#     TF_VAR_get_weka_io_token=...
+#
+# Terraform picks TF_VAR_* up from the environment, which keeps the only
+# genuinely secret input out of any file. Both files are gitignored, so this is
+# defence in depth rather than a hard rule -- uncomment the line below if you
+# would rather keep everything in one place.
+#
+# The backends curl the WEKA release with this token on first boot. A missing
+# or expired token gives you six running i3en instances and no cluster.
+#
+# get_weka_io_token = "REPLACE_ME"
+
+# ---------------------------------------------------------------------------
+# Placement
+# ---------------------------------------------------------------------------
+region = "eu-west-1"
+
+# Leave commented to take the first two available AZs in the region.
+# availability_zones = ["eu-west-1a", "eu-west-1b"]
+
+# prefix + cluster_name must be unique per region: the WEKA module derives
+# Secrets Manager names from them, and Secrets Manager keeps a deleted name
+# reserved for up to 30 days. Re-running a destroyed deployment under the same
+# name inside that window fails.
+prefix       = "weka"
+cluster_name = "poc"
+
+# Check for collisions first:
+#   aws ec2 describe-vpcs --query 'Vpcs[].CidrBlock' --output text
+vpc_cidr = "10.60.0.0/16"
+
+# ---------------------------------------------------------------------------
+# WEKA backend cluster
+# ---------------------------------------------------------------------------
+weka_cluster_size  = 6
+weka_instance_type = "i3en.6xlarge"
+
+# REQUIRED -- the module has a lifecycle precondition demanding this, and
+# preconditions run at PLAN time, so `terraform validate` passes and the plan
+# then fails with "Please provide either install_weka_url or weka_version".
+# It must also be a release your token is entitled to:
+#
+#   curl -so /dev/null -w '%{http_code}\n' \
+#     "https://$TOKEN@get.weka.io/dist/v1/install/4.4.37/4.4.37?provider=aws&region=eu-west-1"
+#
+# 200 = good. 403 = the release exists but your token cannot fetch it, and the
+# backends boot, fail the download, and never form a cluster. (4.4.6, 4.4.7 and
+# 4.4.10 return 403 on a typical SE token; 4.4.37 returns 200.)
+#
+# Keep this on the same release as spec.image in manifests/03-weka-client.yaml.
+weka_version = "4.4.37"
+
+# Data-services instances are not needed to serve CSI volumes.
+weka_data_services_number = 0
+
+# The backend UI ALB. Off by default; reach the UI over an SSH tunnel instead.
+create_weka_alb = false
+
+# ---------------------------------------------------------------------------
+# Access
+# ---------------------------------------------------------------------------
+# SSH to the WEKA backends and EKS nodes. Your address, not 0.0.0.0/0.
+# You still need a bastion or SSM to reach them -- they are in private subnets.
+# allow_ssh_cidrs = ["203.0.113.4/32"]
+
+# Existing EC2 key pair. Leave unset and the WEKA module generates one and
+# writes the private key to /tmp/<prefix>-<cluster_name>-private-key.pem.
+# key_pair_name = "my-key"
+
+# Narrow this for anything that is not a throwaway demo.
+eks_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+
+# ---------------------------------------------------------------------------
+# EKS / WEKA clients
+# ---------------------------------------------------------------------------
+# 1.32 is the minimum for strict-cpu-reservation. Going lower means editing
+# node-userdata.tf -- see the comment there.
+eks_kubernetes_version = "1.32"
+
+client_instance_type = "m6i.8xlarge"
+client_node_count    = 1
+
+# MUST match spec.coresNum in manifests/03-weka-client.yaml. The HugePages
+# reservation is derived from this number.
+client_weka_cores = 4
+
+# Sized for /opt/k8s-weka: ~20 GiB per WEKA container + ~10 GiB per core, plus
+# the OS and container images. See eks.tf.
+client_root_volume_size = 200
+
+# HyperThreading sibling of CPU 0. Correct for m6i.8xlarge. If you change
+# client_instance_type, verify on a running node with:
+#   cat /sys/devices/system/cpu/cpu0/topology/thread_siblings_list
+system_cpu_sibling_index = 16
+
+# ---------------------------------------------------------------------------
+tags = {
+  Project   = "weka-eks-demo"
+  ManagedBy = "terraform"
+  Owner     = "REPLACE_ME"
+}

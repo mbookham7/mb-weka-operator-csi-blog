@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# Directory-backed StorageClass
+# ---------------------------------------------------------------------------
+# WHY THIS FILE IS MANDATORY HERE:
+#
+# The WEKA Operator creates StorageClasses automatically -- but only for a
+# WekaCluster custom resource it manages itself. It derives the filesystem
+# name, the API endpoints and the secret references from that object.
+#
+# Our backend cluster was built by Terraform. There is no WekaCluster object,
+# so there is nothing for the operator to derive any of that from, and no
+# StorageClass appears. With an EXTERNAL backend you always write this by hand.
+# If you are following a WEKA quickstart that skips this step, that quickstart
+# assumed an operator-managed cluster.
+#
+# `volumeType: dir/v1` provisions each PVC as a DIRECTORY inside one shared
+# WEKA filesystem, with a quota applied. The alternative, `fs/v1`, provisions a
+# whole filesystem per PVC. Directories are the right default: filesystem
+# creation is a heavier cluster-level operation and clusters have a bounded
+# number of filesystems, so fs/v1 does not scale to hundreds of PVCs.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: weka-dir
+provisioner: csi.weka.io
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+parameters:
+  volumeType: dir/v1
+
+  # The WEKA filesystem the directories are created inside. IT MUST ALREADY
+  # EXIST -- the CSI plugin creates directories, not filesystems, and a
+  # non-existent name here gives you PVCs that stay Pending.
+  #
+  # The Terraform module creates a default filesystem for you when
+  # `set_default_fs` is true (its default). CONFIRM THE ACTUAL NAME rather
+  # than trusting this value -- SSH to a backend and run:
+  #
+  #     weka fs
+  #
+  # then set `weka_filesystem_name` in terraform.tfvars to match, so the
+  # `next_steps` output and this file stay in agreement.
+  filesystemName: default
+
+  # HARD: a pod cannot write past its PVC's requested size. SOFT: the write
+  # succeeds and the WEKA cluster raises a warning event nobody is watching.
+  # HARD is what makes a PVC's declared capacity mean anything.
+  capacityEnforcement: HARD
+
+  # --- CSI secret references ---------------------------------------------
+  #
+  # Every CSI operation that talks to the WEKA API needs credentials, and the
+  # external-provisioner sidecars pass them per call rather than reading a
+  # config file. So each call site needs its own pair of parameters -- and they
+  # all have to point at the same secret from 04-csi-api-secret.yaml.
+  #
+  # YAML anchors (&secretName / *secretName) keep that consistent: define the
+  # name and namespace once, reference them everywhere. Hand-copying ten string
+  # literals is how you end up with a StorageClass that provisions volumes and
+  # then cannot expand or delete them, because one of the pairs points
+  # somewhere wrong.
+  #
+  # If you split credentials so the node plugins use a lower-privilege account,
+  # this is where you would break the anchors apart deliberately.
+  csi.storage.k8s.io/provisioner-secret-name: &secretName csi-wekafs-api-secret
+  csi.storage.k8s.io/provisioner-secret-namespace: &secretNamespace weka-operator-system
+
+  # Do not change anything below, or set it to the same values as above.
+  csi.storage.k8s.io/controller-publish-secret-name: *secretName
+  csi.storage.k8s.io/controller-publish-secret-namespace: *secretNamespace
+  csi.storage.k8s.io/controller-expand-secret-name: *secretName
+  csi.storage.k8s.io/controller-expand-secret-namespace: *secretNamespace
+  csi.storage.k8s.io/node-stage-secret-name: *secretName
+  csi.storage.k8s.io/node-stage-secret-namespace: *secretNamespace
+  csi.storage.k8s.io/node-publish-secret-name: *secretName
+  csi.storage.k8s.io/node-publish-secret-namespace: *secretNamespace
