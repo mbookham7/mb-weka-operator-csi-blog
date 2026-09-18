@@ -105,6 +105,7 @@ to name them:
 ├── .env                          secrets — gitignored
 ├── .env.example                  tracked template for .env
 ├── .gitignore
+├── LICENSE                       MIT
 └── weka-eks-terraform/           all the Terraform lives here
     ├── versions.tf
     ├── providers.tf
@@ -234,6 +235,17 @@ boot, and the addon ordering in a single `apply` pass.
 | `kubectl` | ≥ 1.30 | Client skew against a 1.32 server |
 | `helm` | ≥ 3.8 | OCI registry support, for `helm pull oci://…` |
 | `jq` | any | Used in the verification steps |
+
+`.terraform.lock.hcl` is committed deliberately — it pins provider versions so
+everyone resolves the same ones. It carries checksums for **linux_amd64,
+linux_arm64, darwin_amd64, darwin_arm64 and windows_amd64**, so `terraform
+init` works as-is on any of those. On any other platform, `init` fails with a
+checksum error rather than silently using an unverified provider; add your
+platform with:
+
+```bash
+terraform providers lock -platform=<os>_<arch>
+```
 
 ---
 
@@ -774,3 +786,9 @@ Called out so you do not have to guess which corners were cut:
   failure for egress.
 - **The node group is fixed-size with no PodDisruptionBudget** or drain
   handling for the WEKA clients.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE).
