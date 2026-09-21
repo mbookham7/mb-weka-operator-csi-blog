@@ -83,8 +83,20 @@ output "manifest_values" {
   }
 }
 
+# THIS OUTPUT MIRRORS README STEP 6 ("Apply the manifests, in order"). THE TWO
+# MUST BE CHANGED TOGETHER.
+#
+# They drifted once already and it was worse than having no runbook at all:
+# this output omitted 02-weka-nics-policy.yaml, so anyone who followed what
+# Terraform printed -- rather than the README -- walked straight into
+# `1 Insufficient weka.io/weka-nics` on a healthy cluster and a healthy node.
+# A printed runbook is trusted precisely because it came out of the thing that
+# built the infrastructure, which is what makes a wrong one expensive.
+#
+# If you add, remove or reorder a manifest, edit both places in the same
+# commit.
 output "next_steps" {
-  description = "Ordered follow-up commands. `terraform output -raw next_steps` to read it without escaping."
+  description = "Ordered follow-up commands, mirroring README step 6. `terraform output -raw next_steps` to read it without escaping."
   value       = <<-EOT
 
     ============================================================================
@@ -170,11 +182,21 @@ output "next_steps" {
        cp 04-csi-api-secret.yaml.example     04-csi-api-secret.yaml
        # edit both: every value is base64. `printf '%s' 'value' | base64`
 
+       Check the manifests against Terraform before applying anything:
+
+         ./check-manifests.sh
+
        kubectl apply -f 01-weka-client-secret.yaml
-       kubectl apply -f 03-weka-client.yaml      # edit joinIpPorts first
+       kubectl apply -f 02-weka-nics-policy.yaml     # BEFORE the client -- attaches data-path ENIs
+       kubectl apply -f 03-weka-client.yaml          # edit joinIpPorts first
        kubectl apply -f 04-csi-api-secret.yaml
        kubectl apply -f 05-storageclass-dir.yaml
        kubectl apply -f 06-smoke-test.yaml
+
+       # Optional demo (needs 3 client nodes):
+       kubectl apply -f 07-rwx-multiwriter.yaml
+       ./08-persistence-check.sh
+       kubectl apply -f 09-fio-job.yaml              # read its header comment first
 
     ----------------------------------------------------------------------------
      5. Verify
@@ -185,6 +207,12 @@ output "next_steps" {
        kubectl logs weka-smoke-test
 
        A Bound PVC and a pod appending timestamps means the whole path works.
+
+       If you applied the demo, this is the payoff -- three distinct hostnames
+       counted out of one shared file:
+
+         kubectl exec deploy/weka-rwx-demo -- sh -c \
+           "awk '{print \$2}' /data/shared.log | sort | uniq -c"
 
     ============================================================================
      COST: ${var.weka_cluster_size} x ${var.weka_instance_type} +

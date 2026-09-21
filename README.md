@@ -704,13 +704,18 @@ kubectl exec deploy/weka-rwx-demo -- sh -c \
 ### Node count
 
 **Beat 4 needs at least 3 client nodes, and beat 5 needs at least 2.**
-`client_node_count` defaults to `3` in `variables.tf`, but
-`terraform.tfvars.example` sets it to `1` to keep the demo affordable — and the
-verified deployment above ran with `1`. The `podAntiAffinity` in `07` is
-`required`, so with too few nodes the surplus replicas do not spread, they sit
-in Pending on `node(s) didn't match pod anti-affinity rules`. `check-manifests.sh`
-compares `07`'s `replicas` against the labelled client nodes actually present,
-so you find out before you apply rather than on camera.
+`client_node_count` is `3` in both `variables.tf` and
+`terraform.tfvars.example`, which is what the cost table, the quota figure and
+the demo manifests all assume. Dropping it to `1` is the minimal-smoke-test
+option — it still gets you through `00`–`06`, but `07`, `08` and `demo.sh` all
+need 3. (The verified deployment above ran with `1`, which is why its table
+records `clients: 1 connected`.)
+
+The `podAntiAffinity` in `07` is `required`, so with too few nodes the surplus
+replicas do not spread, they sit in Pending on `node(s) didn't match pod
+anti-affinity rules`. `check-manifests.sh` compares `07`'s `replicas` against
+the labelled client nodes actually present, so you find out before you apply
+rather than on camera.
 
 ### Rehearsing beat 2
 
