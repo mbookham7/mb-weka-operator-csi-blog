@@ -18,7 +18,15 @@ spec:
   # ------------------------------------------------------------------------
   # The client container version must match the WEKA release on the backend
   # cluster -- this tag is deliberately the same 5.1.32.19 as `weka_version`
-  # in terraform.tfvars. Verify a tag exists before applying:
+  # in terraform.tfvars.
+  #
+  # Match it EXACTLY rather than approximately. A client more than one major
+  # version behind its backend is unsupported, and the interesting part is that
+  # skew does not announce itself: the client joins, `weka status` is green, and
+  # you find out from behaviour rather than from an error. Keeping the two
+  # strings identical costs nothing and removes the question.
+  #
+  # Verify a tag exists before applying:
   #
   #   curl -so /dev/null -w '%{http_code}' -H "Authorization: Bearer <tok>" \
   #     https://quay.io/v2/weka.io/weka-in-container/manifests/<tag>

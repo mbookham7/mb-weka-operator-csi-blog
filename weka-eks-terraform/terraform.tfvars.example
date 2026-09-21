@@ -65,7 +65,7 @@ weka_instance_type = "i3en.6xlarge"
 #
 #   curl -s "https://$TOKEN@get.weka.io/dist/v1/release?id=5.1&public=true&page_size=200" \
 #     | jq -r '.objects[] | select(.id | test("^5\\.1\\.[0-9]+\\.[0-9]+$"))
-#              | "\(.id)  grade=\(.grade) lts=\(.lts) limited=\(.limited) \(.published_at)"'
+#              | "\(.id)  grade=\(.grade) limited=\(.limited) \(.published_at)"'
 #
 # WHY 5.1 RATHER THAN 4.4
 #
@@ -82,12 +82,10 @@ weka_instance_type = "i3en.6xlarge"
 # 5.1.21.26, 5.1.20.7, 5.1.0.605. Avoid 5.1.30.575 -- the release feed marks it
 # `limited`.
 #
-# ONE THING TO KNOW BEFORE YOU BUMP: the get.weka.io release feed flags the 4.4
-# line `lts: true` and flags NOTHING on the 5.1 or 5.0 lines. That is a
-# labelling difference in the feed, not a contradiction of the lifecycle dates
-# above, but it means 4.4.37 and 5.1.32.19 are not like-for-like choices and
-# you should confirm the target release with WEKA Customer Success rather than
-# taking the newest thing the feed will serve you.
+# Still confirm the exact release with WEKA Customer Success rather than taking
+# the newest thing the feed will serve you -- the supported operator / client
+# image / cluster release triple comes from them, not from a docs page. See
+# WEKA_OPERATOR_VERSION in .env.example.
 #
 # Keep this on the same release as spec.image in manifests/03-weka-client.yaml
 # AND manifests/02-weka-nics-policy.yaml. manifests/check-manifests.sh fails on

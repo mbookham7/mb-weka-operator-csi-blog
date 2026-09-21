@@ -73,13 +73,48 @@ variable "weka_instance_type" {
 }
 
 variable "weka_version" {
-  description = "WEKA release to install on the backends. NOT optional: the module has a lifecycle precondition requiring either this or `install_weka_url` to be non-empty, and because preconditions are evaluated at plan time rather than validate time, leaving it empty fails with 'Please provide either install_weka_url or weka_version' only once you run plan. Must also be a release your get.weka.io token is entitled to -- an unentitled version returns HTTP 403 from get.weka.io and the backends boot, fail to download, and never form a cluster."
+  description = <<-EOT
+    WEKA release to install on the backends. Set it in terraform.tfvars; this
+    repo targets 5.1.32.19.
+
+    THERE IS DELIBERATELY NO DEFAULT, AND ADDING ONE BACK IS A REGRESSION.
+
+    A default here is actively dangerous rather than merely untidy. The value
+    is interpolated straight into the get.weka.io download URL, and whether
+    any given release works depends on what YOUR token is entitled to -- which
+    Terraform cannot know and a default cannot encode. An unentitled release
+    does not fail at plan time and does not fail the apply: the backends launch,
+    fail the download during cloud-init, and never form a cluster. You get six
+    i3en.6xlarge burning ~$20/hour on a failure whose only symptom is a cluster
+    that never appears, which reads as a networking problem and sends you to the
+    security group and the NAT gateway instead of to a 403.
+
+    A missing value, by contrast, fails loudly and free of charge -- the module
+    has a lifecycle precondition requiring this or `install_weka_url` to be
+    non-empty. Note that preconditions are evaluated at PLAN time, not validate
+    time, so `terraform validate` passes and the plan then fails with
+    "Please provide either install_weka_url or weka_version".
+
+    Check entitlement before you apply. 200 is good; 403 means the release
+    exists but your token cannot fetch it:
+
+      curl -so /dev/null -w '%%{http_code}\n' \
+        "https://$TOKEN@get.weka.io/dist/v1/install/5.1.32.19/5.1.32.19?provider=aws&region=eu-west-1"
+
+    The same endpoint lists what you can actually have, which beats guessing
+    patch numbers:
+
+      curl -s "https://$TOKEN@get.weka.io/dist/v1/release?id=5.1&public=true&page_size=200"
+
+    Keep this in step with `spec.image` in manifests/02-weka-nics-policy.yaml
+    and manifests/03-weka-client.yaml -- the client container and the backend
+    release must match. manifests/check-manifests.sh fails on drift.
+  EOT
   type        = string
-  default     = "4.4.5"
 
   validation {
-    condition     = length(var.weka_version) > 0
-    error_message = "weka_version must be set -- the WEKA module requires it (see the description). Verify your token can fetch the release you pick: curl the URL https://TOKEN@get.weka.io/dist/v1/install/<ver>/<ver>?provider=aws&region=<region> and check the HTTP status -- 200 means good, 403 means your token is not entitled to that release."
+    condition     = can(regex("^5\\.1\\.", var.weka_version))
+    error_message = "This repo targets the WEKA 5.1 line. Set weka_version to a 5.1.x release (this repo is verified against 5.1.32.19) and keep the weka-in-container tag in manifests 02 and 03 identical to it. The node prep, the reserved port arithmetic in node-userdata.tf and the operator floor in .env.example are all written for 5.1; a 4.4 backend is not a supported target here. Check entitlement first: curl -so /dev/null -w '%%{http_code}' \"https://$TOKEN@get.weka.io/dist/v1/install/<ver>/<ver>?provider=aws&region=<region>\" -- 200 good, 403 means your token is not entitled to that release."
   }
 }
 
