@@ -1,0 +1,158 @@
+# ===========================================================================
+#  DO NOT PUBLISH RESULTS FROM THIS JOB WITHOUT AN APPROVED WEKA FACT NOTE
+# ===========================================================================
+#
+# Any performance figure produced by this manifest -- throughput, IOPS,
+# latency, a ratio, a "faster than" comparison, or a screenshot of the output
+# -- is a Tier 3 brand review item. That means, before it appears in a blog
+# post, a slide, a social post or a customer conversation:
+#
+#   - the comparison methodology has to be written down and disclosed, and
+#   - product marketing has to sign off on it.
+#
+# Unverified benchmark numbers are the single easiest way to turn a good
+# technical post into a correction. This repo ships the manifest so that
+# readers can run it on THEIR cluster and see THEIR numbers; the blog post
+# quotes none of its output, and neither does the README.
+#
+# So: no example output, no expected throughput, no "you should see roughly"
+# in this file. If you are tempted to add one, that is the thing the Fact Note
+# process exists to catch. Take it to WEKA Customer Success / product
+# marketing instead.
+#
+# There is also a technical reason not to trust a number from this as a WEKA
+# result: it is ONE fio process on ONE client node, against a directory-backed
+# PVC with a HARD quota on it, on whatever instance type happened to be in the
+# node group, with a file small enough to finish in under two minutes. None of
+# those are the conditions a WEKA performance claim is made under. It tells you
+# the data path works and is not pathologically slow. It does not size
+# anything.
+#
+# ---------------------------------------------------------------------------
+# What it actually does
+# ---------------------------------------------------------------------------
+# Three phases against the RWX volume from 07-rwx-multiwriter.yaml, run
+# strictly one after another (`stonewall`), so they do not contend with each
+# other and the output is readable phase by phase:
+#
+#   seq-write      1 MiB sequential write  -- also lays out the test file
+#   seq-read       1 MiB sequential read   -- of the file just written
+#   rand-read-4k   4 KiB random read       -- the metadata/small-IO path
+#
+# Sequential write is first on purpose. fio will happily run a read job
+# against a file that does not exist yet, but it has to create and lay out the
+# file first, and that layout write lands inside the "read" job's wall clock.
+# Writing first means each phase measures what its name says.
+#
+#   kubectl apply -f 09-fio-job.yaml
+#   kubectl logs -f job/weka-fio
+#
+# Clean up with: kubectl delete -f 09-fio-job.yaml
+# The test file is removed by the job itself; delete the PVC with 07.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: weka-fio-profile
+data:
+  # Runtimes and file size are deliberately small: this is a demo beat in a
+  # recording, not a characterisation run.
+  #
+  # BUDGET: 3 phases x 25s = 75s of measured IO, plus file layout and the
+  # package install below. Comfortably under two minutes end to end.
+  #
+  # QUOTA: `size=512m` against 07's 10Gi PVC. The StorageClass sets
+  # capacityEnforcement: HARD, so the quota is real -- an fio file larger than
+  # the PVC request does not fail at submission, it fails PARTWAY THROUGH the
+  # write phase with ENOSPC, which looks like an IO error rather than a sizing
+  # mistake. Keep `size` well inside the PVC request if you raise either.
+  fio.job: |
+    [global]
+    directory=/data/fio
+    filename=weka-fio-testfile
+    size=512m
+    # O_DIRECT, so the numbers describe the WEKA data path rather than the
+    # node's page cache. Without this the 4k random read phase mostly measures
+    # DRAM, which is the classic way to accidentally produce an impressive and
+    # completely meaningless figure.
+    direct=1
+    ioengine=libaio
+    iodepth=16
+    time_based=1
+    runtime=25
+    ramp_time=2
+    group_reporting=1
+
+    [seq-write]
+    rw=write
+    bs=1m
+
+    [seq-read]
+    stonewall
+    rw=read
+    bs=1m
+
+    [rand-read-4k]
+    stonewall
+    rw=randread
+    bs=4k
+    iodepth=32
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: weka-fio
+spec:
+  # One attempt. A retry would run against a half-written test file and a
+  # partly-consumed quota, so a second attempt tells you less than the first
+  # failure did.
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: fio
+          # Alpine plus `apk add fio` rather than a prebuilt fio image,
+          # because there is no fio image in the Docker Hub official library
+          # and therefore none in the public.ecr.aws/docker/library mirror this
+          # repo pulls everything else from. Pulling a random third-party fio
+          # image into a demo is a worse trade than one package install.
+          #
+          # fio is in Alpine's `community` repository, which the official
+          # image enables by default. This needs egress to
+          # dl-cdn.alpinelinux.org -- provided by the NAT gateway. In an
+          # air-gapped VPC, mirror an fio image into your own registry and
+          # replace this command with a bare `fio /etc/fio/fio.job`.
+          image: public.ecr.aws/docker/library/alpine:3.22
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache fio >/dev/null
+              mkdir -p /data/fio
+              echo "fio $(fio --version) on $(hostname)"
+              df -hT /data
+              echo
+              # Clean up the test file even if fio fails, so a re-run is not
+              # fighting for space inside the quota.
+              trap 'rm -rf /data/fio' EXIT
+              fio /etc/fio/fio.job
+          volumeMounts:
+            - name: weka
+              mountPath: /data
+            - name: profile
+              mountPath: /etc/fio
+      volumes:
+        - name: weka
+          persistentVolumeClaim:
+            # The same RWX claim 07 creates. Running fio against the volume
+            # the multi-writer demo is already using is deliberate: it is a
+            # shared filesystem, and other writers being present while you
+            # measure is the normal condition, not interference to be
+            # eliminated. It is also one more reason not to publish the
+            # number.
+            claimName: weka-rwx-demo-pvc
+        - name: profile
+          configMap:
+            name: weka-fio-profile

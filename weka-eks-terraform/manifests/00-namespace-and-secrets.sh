@@ -18,10 +18,23 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# Pin the operator version. Get the version to use from WEKA Customer Success
-# along with your Quay credentials -- the operator, the weka-in-container
-# image in 03-weka-client.yaml, and your backend cluster's WEKA release all
-# have to be a supported combination. Do not just take "latest".
+# Pin the operator version, and get it from WEKA Customer Success along with
+# your Quay credentials.
+#
+# ASK FOR ALL THREE TOGETHER: the operator chart version, the
+# weka-in-container image tag used by manifests 02 and 03, and the WEKA release
+# on the backend cluster (`weka_version` in terraform.tfvars). They are a
+# supported TRIPLE rather than three independent choices, and the triple is not
+# on a docs page -- it comes from Customer Success. Do not just take "latest".
+#
+# Deliberately a variable with a fallback rather than a hard-coded pin, so
+# bumping it is an edit to .env and not an edit to this script.
+#
+# For the 5.1 backend this repo targets, the operator feature matrix puts NFS
+# and Audit at Operator 1.10 with WEKA 5.1.0 or later; that combination also
+# drops port allocation to 260 ports per cluster from 500. The fallback below
+# clears that floor, which does not make it the right version for your cluster
+# release -- confirm it.
 WEKA_OPERATOR_VERSION="${WEKA_OPERATOR_VERSION:-v1.16.0}"
 
 OPERATOR_NAMESPACE="${OPERATOR_NAMESPACE:-weka-operator-system}"

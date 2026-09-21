@@ -44,17 +44,55 @@ weka_instance_type = "i3en.6xlarge"
 # REQUIRED -- the module has a lifecycle precondition demanding this, and
 # preconditions run at PLAN time, so `terraform validate` passes and the plan
 # then fails with "Please provide either install_weka_url or weka_version".
-# It must also be a release your token is entitled to:
+#
+# The module has NO default for this (`weka_version` defaults to "" in
+# weka/weka/aws 2.0.1) and does nothing with the value except interpolate it
+# into the download URL twice:
+#
+#   https://$TOKEN@get.weka.io/dist/v1/install/<version>/<version>?provider=aws&region=<r>
+#
+# There is no version gate, no floor and no parsing anywhere in the module, so
+# the only thing that decides whether a release is reachable is whether your
+# token is entitled to it. Check before you apply:
 #
 #   curl -so /dev/null -w '%{http_code}\n' \
-#     "https://$TOKEN@get.weka.io/dist/v1/install/4.4.37/4.4.37?provider=aws&region=eu-west-1"
+#     "https://$TOKEN@get.weka.io/dist/v1/install/5.1.32.19/5.1.32.19?provider=aws&region=eu-west-1"
 #
 # 200 = good. 403 = the release exists but your token cannot fetch it, and the
 # backends boot, fail the download, and never form a cluster. (4.4.6, 4.4.7 and
-# 4.4.10 return 403 on a typical SE token; 4.4.37 returns 200.)
+# 4.4.10 return 403 on a typical SE token.) The same endpoint will list what
+# you can actually have, which beats guessing patch numbers:
 #
-# Keep this on the same release as spec.image in manifests/03-weka-client.yaml.
-weka_version = "4.4.37"
+#   curl -s "https://$TOKEN@get.weka.io/dist/v1/release?id=5.1&public=true&page_size=200" \
+#     | jq -r '.objects[] | select(.id | test("^5\\.1\\.[0-9]+\\.[0-9]+$"))
+#              | "\(.id)  grade=\(.grade) lts=\(.lts) limited=\(.limited) \(.published_at)"'
+#
+# WHY 5.1 RATHER THAN 4.4
+#
+# 4.4 is past its end of proactive updates (1 June 2026) and is in the
+# critical-updates-only phase until 1 June 2027. 5.1 has proactive updates to
+# 1 June 2027 and support to 1 June 2028. The WEKA Operator's feature matrix is
+# also built around 5.1: NFS and Audit require Operator 1.10 with WEKA 5.1.0 or
+# later, and that combination drops port allocation to 260 ports per cluster
+# from 500 (see the reserved-ports comment in node-userdata.tf).
+#
+# 5.1.32.19 is the newest PUBLIC GA release on the 5.1 line as of 2026-09-21
+# (published 2026-08-27) and returns 200 on an SE token. Observed alternatives
+# on the same line, all 200, if you want something more seasoned: 5.1.23.1,
+# 5.1.21.26, 5.1.20.7, 5.1.0.605. Avoid 5.1.30.575 -- the release feed marks it
+# `limited`.
+#
+# ONE THING TO KNOW BEFORE YOU BUMP: the get.weka.io release feed flags the 4.4
+# line `lts: true` and flags NOTHING on the 5.1 or 5.0 lines. That is a
+# labelling difference in the feed, not a contradiction of the lifecycle dates
+# above, but it means 4.4.37 and 5.1.32.19 are not like-for-like choices and
+# you should confirm the target release with WEKA Customer Success rather than
+# taking the newest thing the feed will serve you.
+#
+# Keep this on the same release as spec.image in manifests/03-weka-client.yaml
+# AND manifests/02-weka-nics-policy.yaml. manifests/check-manifests.sh fails on
+# drift between the three.
+weka_version = "5.1.32.19"
 
 # Data-services instances are not needed to serve CSI volumes.
 weka_data_services_number = 0

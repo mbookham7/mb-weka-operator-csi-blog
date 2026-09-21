@@ -105,6 +105,43 @@ locals {
     #
     # These are reservations, not firewall rules: the kernel simply will not
     # auto-assign from these ranges. WEKA can still bind them explicitly.
+    #
+    # THE ARITHMETIC, and why this is not being narrowed for WEKA 5.1
+    #
+    # The client allocates a contiguous block of ports from `portRange.basePort`
+    # in manifests/03-weka-client.yaml, which is 46000. How many ports it wants
+    # depends on the operator/release combination:
+    #
+    #   before Operator 1.10 + WEKA 5.1.0   500 ports   46000-46499
+    #   Operator 1.10 + WEKA 5.1.0 onward   260 ports   46000-46259
+    #
+    # 45000-47000 is 2001 ports. It contains both cases with room either side --
+    # 1000 ports below basePort and 501 above even the 500-port case -- so the
+    # move to 5.1 does not require a change here, and the range is left as it
+    # is rather than narrowed to 46000-46259.
+    #
+    # Left deliberately wide because the cost of over-reserving is small and
+    # the cost of under-reserving is the bug this whole block exists to prevent.
+    # The default ephemeral range on AL2023 is 32768-60999, i.e. 28232 ports;
+    # the two reservations below remove 4602 of them, about 16%. Nothing on
+    # these nodes opens outbound sockets at anything like that scale. Whereas
+    # narrowing to exactly the block the client currently wants means that
+    # raising `coresNum`, changing `basePort`, or an operator release that
+    # allocates differently reintroduces the race -- and the race does not fail
+    # loudly. WEKA fails to bind, and you find out much later as a client that
+    # will not start, with nothing in any log pointing at a port conflict.
+    #
+    # If you do narrow it, narrow it in Terraform and change basePort in the
+    # manifest in the same commit, and remember that user data only runs at
+    # FIRST BOOT: existing nodes keep the old sysctl until the group is
+    # recycled.
+    #
+    # The 35000-37600 block (2601 ports) predates this repo's notes and is NOT
+    # explained by the client portRange above. It is carried forward unchanged
+    # because it is harmless and because nothing here establishes what binds
+    # it -- do not remove it on the assumption that it is dead, and if you need
+    # to justify it in a security review, get the answer from WEKA rather than
+    # from this comment.
     net.ipv4.ip_local_reserved_ports = 35000-37600,45000-47000
     SYSCTL
 

@@ -41,7 +41,9 @@ spec:
   type: "ensure-nics"
 
   # Keep this on the same release as the WekaClient and the backend cluster.
-  image: "quay.io/weka.io/weka-in-container:4.4.37"
+  # Same tag as `weka_version` in terraform.tfvars and `spec.image` in
+  # 03-weka-client.yaml; check-manifests.sh fails on drift between the three.
+  image: "quay.io/weka.io/weka-in-container:5.1.32.19"
   imagePullSecret: "quay-io-robot-secret"
 
   payload:

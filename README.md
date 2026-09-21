@@ -139,6 +139,22 @@ level up at the repo root.
 | `manifests/` | Applied by hand after `apply`, **in numeric order** — `02-weka-nics-policy.yaml` must precede the `WekaClient` |
 | `manifests/check-manifests.sh` | Drift check: compares the manifests against `terraform output manifest_values`. Run it before applying |
 
+The manifests, in the order they are applied:
+
+| File | What it does | Needed to deploy? |
+|---|---|---|
+| `00-namespace-and-secrets.sh` | Namespace, Quay pull secrets in two namespaces, CRDs, and the operator Helm install | yes |
+| `01-weka-client-secret.yaml` | Credentials the `weka-in-container` client uses to **join** the cluster. Copy from the `.example` | yes |
+| `02-weka-nics-policy.yaml` | `WekaPolicy` that attaches DPDK data-path ENIs and advertises `weka.io/weka-nics` | yes — **before** `03` |
+| `03-weka-client.yaml` | The `WekaClient`. Edit `joinIpPorts` with real backend IPs | yes |
+| `04-csi-api-secret.yaml` | Credentials the CSI controller and node plugins use for the WEKA **REST API**. Copy from the `.example` | yes |
+| `05-storageclass-dir.yaml` | The `weka-dir` StorageClass. Mandatory with an external backend — nothing creates it for you | yes |
+| `06-smoke-test.yaml` | One pod, one 1Gi RWX PVC, 20 timestamps. Proves the path end to end | yes, once |
+| `07-rwx-multiwriter.yaml` | 3 replicas on 3 nodes appending to **one** file on a 10Gi RWX PVC. The shared-filesystem demo | demo only |
+| `08-persistence-check.sh` | Writes a sentinel, deletes the pod, cordons its node, asserts the pod reschedules elsewhere and reads the sentinel back | demo only |
+| `09-fio-job.yaml` | Short fio profile against `07`'s volume. **Results are not publishable without an approved WEKA Fact Note** — see the header comment | demo only |
+| `demo.sh` | Drives the five demo beats in order, with pauses, for a recording. `--reset` returns to the pre-demo state | demo only |
+
 ---
 
 ## Module versions
@@ -172,15 +188,71 @@ If you must stay on the AWS 5.x provider line, you have to pin
 `weka/weka/aws` at `1.0.1` and accept a module that predates the current WEKA
 deployment flow. Not recommended.
 
+### The WEKA release itself is not a module version
+
+`weka/weka/aws` 2.0.1 has **no default** for `weka_version` (it defaults to
+`""`), does not gate on it, and does not parse it. The only thing it does with
+the value is interpolate it into the download URL twice:
+
+```
+https://$TOKEN@get.weka.io/dist/v1/install/<version>/<version>?provider=aws&region=<r>
+```
+
+So the module imposes no floor and no ceiling, and the only question is whether
+your `get.weka.io` token is entitled to the release. This repo targets:
+
+| | Pinned | Note |
+|---|---|---|
+| WEKA release | **5.1.32.19** | `weka_version` in `terraform.tfvars.example`. Newest public GA on the 5.1 line as of 2026-09-21 |
+| `weka-in-container` | **5.1.32.19** | `spec.image` in manifests `02` and `03` — must equal the release |
+| Operator chart | **variable** | `WEKA_OPERATOR_VERSION` in `.env`. The supported triple comes from WEKA Customer Success, not from a docs page — **ask for all three together** |
+
+4.4 is past its end of proactive updates (1 June 2026) and is in
+critical-updates-only until 1 June 2027; 5.1 has proactive updates to 1 June
+2027 and support to 1 June 2028. One wrinkle worth knowing before you bump:
+the get.weka.io release feed flags the **4.4** line `lts: true` and flags
+nothing on 5.0 or 5.1. That is a labelling difference in the feed rather than a
+contradiction of those dates, but it means 4.4.37 and 5.1.32.19 are not a
+like-for-like swap — confirm the target release with Customer Success.
+
+`terraform.tfvars.example` carries the `curl` that checks entitlement and the
+one that lists what your token can actually have.
+
 ---
 
 ## Verified end to end
 
 This is not a sketch. It was deployed in `eu-west-1` and taken all the way to a
 mounted `ReadWriteMany` PVC, and every number below was observed rather than
-assumed:
+assumed.
 
-| Check | Observed |
+> ### ⚠️ Observed on WEKA 4.4.37. Not yet re-verified on 5.1.
+>
+> The repo now targets **5.1.32.19** (see [The WEKA release itself is not a
+> module version](#the-weka-release-itself-is-not-a-module-version)). The table
+> below is the **4.4.37** run, reproduced verbatim, and is left that way on
+> purpose: re-stating a 4.4 measurement as though it had been taken on 5.1
+> would make the most valuable thing in this repo untrue.
+>
+> What is expected to change on 5.1, and is therefore **unmeasured** here:
+>
+> - the `WekaIO v…` version string, obviously
+> - the client pod's HugePages request, and with it the
+>   `client_hugepages_headroom_mib` default — the `6256Mi`-for-4-cores figure
+>   below is a 4.4 operator/client observation and the arithmetic is not
+>   documented anywhere, so it has to be re-measured rather than predicted
+> - the port count the client allocates from `basePort`, which drops to 260
+>   from 500 with Operator 1.10 + WEKA 5.1.0 (the reserved range is wide enough
+>   for both — see the comment in `node-userdata.tf`)
+> - timings, since the `weka-in-container` image is a different size
+>
+> Everything else in the table is a property of the VPC, the node prep and the
+> CSI plumbing rather than of the WEKA release, so it is expected to hold. That
+> is an expectation, not a measurement. **Re-run the deployment on 5.1 and
+> replace this block with the observed values before publishing anything off
+> this table.**
+
+| Check | Observed (4.4.37) |
 |---|---|
 | WEKA cluster | `WekaIO v4.4.37` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (Fully protected)` · 36.82 TiB |
 | Client joined | `clients: 1 connected`; `weka cluster container` shows the EKS node `UP`, 4 cores, 6.35 GB |
@@ -193,14 +265,15 @@ assumed:
 | Quota | the mount shows 1.0G, so `capacityEnforcement: HARD` is applying a real quota |
 | Teardown | PV auto-deleted, i.e. the CSI plugin removed the backing WEKA directory |
 
-Timings, for planning: ~20 min for `terraform apply`, a further ~7 min for the
-WEKA cluster to clusterize, ~90 s for a node to register, and a few minutes for
-the multi-GiB `weka-in-container` pull. Budget an hour from nothing to a
-mounted PVC.
+Timings, for planning, also measured on the 4.4.37 run: ~20 min for
+`terraform apply`, a further ~7 min for the WEKA cluster to clusterize, ~90 s
+for a node to register, and a few minutes for the multi-GiB
+`weka-in-container` pull. Budget an hour from nothing to a mounted PVC.
 
-Everything above has been re-verified on a second, independent deployment from
-an empty state — including the 3584-page HugePages reservation from a cold
-boot, and the addon ordering in a single `apply` pass.
+Every row in the table was re-verified on a second, independent 4.4.37
+deployment from an empty state — including the 3584-page HugePages
+reservation from a cold boot, and the addon ordering in a single `apply` pass.
+Neither run was on 5.1.
 
 ## Prerequisites
 
@@ -481,6 +554,15 @@ It also verifies `dataNICsNumber >= coresNum` and that the two secret files no
 longer contain `REPLACE_ME` placeholders. Two seconds here saves 10–20 minutes
 of debugging a Pending pod.
 
+For the demo assets it additionally checks that `07`'s `storageClassName`
+matches the StorageClass `05` actually creates, that `09` claims `07`'s PVC,
+that every `weka-in-container` tag in *any* manifest matches
+`terraform output manifest_values`, that the `busybox` tag is pinned and
+identical across `06`/`07`/`08`, that `09`'s fio `size` fits inside `07`'s
+quota, that the scripts are executable — and, against the live cluster, that
+there are enough schedulable client nodes for `07`'s replica count and for
+`08`'s cordon.
+
 > **`03-weka-client.yaml` is tracked, not a `.example`.** It ships with obvious
 > placeholder `joinIpPorts` that you edit in place. The check fails while they
 > are still placeholders, so you cannot forget — but note the reverse hazard
@@ -507,6 +589,17 @@ kubectl apply -f 04-csi-api-secret.yaml
 kubectl apply -f 05-storageclass-dir.yaml
 kubectl apply -f 06-smoke-test.yaml
 ```
+
+Everything above is the deployment. The demo assets are optional and come
+after it:
+
+```bash
+kubectl apply -f 07-rwx-multiwriter.yaml      # needs >= 3 client nodes
+./08-persistence-check.sh                     # needs >= 2 client nodes
+kubectl apply -f 09-fio-job.yaml              # read its header comment first
+```
+
+Or let `./demo.sh` drive all of it in order — see [Demo](#demo).
 
 > `02-weka-nics-policy.yaml` is **required on AWS, and the easiest file to
 > overlook.** The WEKA client's data path is DPDK: it binds NICs directly from
@@ -541,6 +634,80 @@ kubectl logs weka-smoke-test                 # want "SMOKE TEST PASSED"
 A `Bound` PVC and a pod appending timestamps to it means the whole path works:
 CSI controller → WEKA REST API → directory with a quota → CSI node plugin →
 WEKA client → mount.
+
+---
+
+## Demo
+
+`06-smoke-test.yaml` proves the plumbing, and that is all it proves — one pod,
+one mount, one file, which an EBS volume would have done just as well. Files
+`07` to `09` plus `demo.sh` are the part that shows what the backend is for.
+
+```bash
+cd manifests
+./demo.sh              # paused between beats, for a recording
+./demo.sh --no-pause   # straight through
+./demo.sh --reset      # back to the pre-demo state, then exit
+```
+
+`demo.sh` applies `02` and `03` itself — beat 2 depends on them **not** being
+there yet. Everything through `05` has to be in place first.
+
+### The five beats, and what each one proves
+
+| # | Beat | What it proves that the previous one did not |
+|---|---|---|
+| 1 | **Node prep.** `hugepages-2Mi` per node, and `cpu` allocatable reading 30 against a capacity of 32 | That Terraform's user data ran at first boot and took effect. None of it can be done afterwards: HugePages only allocate reliably while memory is unfragmented, and the kubelet only advertises them if they existed before its first node status update. `30/32` is `strict-cpu-reservation` holding CPU 0 and its HT sibling out of the shared pool |
+| 2 | **The negative case.** `03-weka-client.yaml` applied *without* `02-weka-nics-policy.yaml`, Pending on `1 Insufficient weka.io/weka-nics`, then scheduling the moment the policy lands | That a DPDK data path needs dedicated ENIs, that nothing in Terraform can attach them, and that the resulting failure is invisible: a healthy cluster, a healthy node, and a pod that waits forever for an extended resource only an operator CR creates. This is the best teaching moment in the deployment, which is why it is a deliberate, resettable step |
+| 3 | **The mount.** `kubectl get pvc`, then `df -hT /data` inside a pod | That the CSI controller created a **directory** inside an existing WEKA filesystem and the quota on it is real. Two things to point at: the filesystem type is `wekafs`, not ext4 on a block device; and the size is the PVC's request, not the cluster's 36 TiB — which is `capacityEnforcement: HARD` doing its job |
+| 4 | **Shared writes.** Three replicas, one per node, appending to `/data/shared.log`, counted with one `uniq -c` | That three kernels can hold one file open for append concurrently, with no locking in the workload, and the counts add up. **No block volume does this** — RWX on EBS does not exist, and a block device with a single-writer filesystem on top corrupts. It is also the only beat that exercises the CSI node plugin on *every* node rather than the one the scheduler happened to pick |
+| 5 | **Node loss.** `08-persistence-check.sh`: write a sentinel, delete the pod, cordon its node, assert the replacement scheduled elsewhere, read the sentinel back | That the data outlives both the pod and the machine it was written from. On EKS node loss is routine — spot interruption, AMI roll, instance refresh, a drain you did yourself — and it is the point where node-local storage quietly becomes data loss. The cordon is what makes the assertion mean anything: without it the scheduler puts the pod straight back where it was |
+
+The payoff for beat 4 is one command:
+
+```bash
+kubectl exec deploy/weka-rwx-demo -- sh -c \
+  "awk '{print \$2}' /data/shared.log | sort | uniq -c"
+```
+
+### Node count
+
+**Beat 4 needs at least 3 client nodes, and beat 5 needs at least 2.**
+`client_node_count` defaults to `3` in `variables.tf`, but
+`terraform.tfvars.example` sets it to `1` to keep the demo affordable — and the
+verified deployment above ran with `1`. The `podAntiAffinity` in `07` is
+`required`, so with too few nodes the surplus replicas do not spread, they sit
+in Pending on `node(s) didn't match pod anti-affinity rules`. `check-manifests.sh`
+compares `07`'s `replicas` against the labelled client nodes actually present,
+so you find out before you apply rather than on camera.
+
+### Rehearsing beat 2
+
+`./demo.sh --reset` deletes the demo workloads, then the `WekaClient`, then the
+`WekaPolicy`, and uncordons anything `08` left behind.
+
+It then checks whether the nodes have actually stopped advertising
+`weka.io/weka-nics`, and tells you if they have not — because **deleting the
+`WekaPolicy` does not detach the data-path ENIs.** They are released when the
+node terminates, not when the policy goes away (see [Teardown](#teardown)). If
+the extended resource is still on the node, the client in beat 2 schedules
+immediately and there is no negative case to show; you need to recycle the node
+group for a clean take. Everything else in the demo works regardless.
+
+### Performance numbers
+
+`09-fio-job.yaml` ships so that readers can run it on their own cluster. **Its
+output is not published here, and must not be published elsewhere without an
+approved WEKA Fact Note** — any throughput, IOPS, latency or comparison figure
+is a Tier 3 brand review item, which means the comparison methodology has to be
+disclosed and product marketing has to sign off.
+
+There is a technical reason as well as a process one: it is one fio process on
+one client node, against a directory-backed PVC with a hard quota, on whatever
+instance type is in the node group, with a file small enough to finish inside
+two minutes. That tells you the data path works and is not pathologically
+slow. It does not size anything. The file's header comment says the same thing
+at more length.
 
 ---
 
@@ -677,11 +844,16 @@ this design onto your own hardware).
 ## Teardown
 
 ```bash
+kubectl delete -f manifests/09-fio-job.yaml --ignore-not-found
+kubectl delete -f manifests/07-rwx-multiwriter.yaml --ignore-not-found
 kubectl delete -f manifests/06-smoke-test.yaml
 kubectl delete -f manifests/05-storageclass-dir.yaml
 kubectl delete -f manifests/03-weka-client.yaml
 terraform destroy
 ```
+
+(`manifests/demo.sh --reset` does the first two, plus the `WekaClient` and the
+`WekaPolicy`, if you would rather not remember the order.)
 
 Delete the Kubernetes objects **first**. A `Delete` reclaim policy means the CSI
 plugin tries to remove the WEKA directories backing your PVCs; if you tear down

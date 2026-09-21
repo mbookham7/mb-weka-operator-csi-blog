@@ -17,15 +17,19 @@ spec:
   # Image
   # ------------------------------------------------------------------------
   # The client container version must match the WEKA release on the backend
-  # cluster -- this tag is deliberately the same 4.4.37 as `weka_version` in
-  # terraform.tfvars. Verify a tag exists before applying:
+  # cluster -- this tag is deliberately the same 5.1.32.19 as `weka_version`
+  # in terraform.tfvars. Verify a tag exists before applying:
   #
   #   curl -so /dev/null -w '%{http_code}' -H "Authorization: Bearer <tok>" \
   #     https://quay.io/v2/weka.io/weka-in-container/manifests/<tag>
   #
+  # Note that the quay `tags/list` endpoint pages at 100 tags and does not sort
+  # them, so "my tag is not in the list" usually means you read page one. Probe
+  # the manifest for the exact tag instead, as above.
+  #
   # The older `-k8s.N` suffix (e.g. 4.4.5.118-k8s.4) was dropped after the
   # 4.4.5 line; later releases are plain version tags.
-  image: "quay.io/weka.io/weka-in-container:4.4.37"
+  image: "quay.io/weka.io/weka-in-container:5.1.32.19"
 
   # Pull secret created by 00-namespace-and-secrets.sh. Separate from the
   # chart-wide `imagePullSecret` Helm value, which only covers operator pods.

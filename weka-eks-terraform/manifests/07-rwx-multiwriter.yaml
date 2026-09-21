@@ -1,0 +1,148 @@
+# ---------------------------------------------------------------------------
+# The headline demo: three pods on three nodes writing to ONE file
+# ---------------------------------------------------------------------------
+# 06-smoke-test.yaml proves the plumbing. It does not prove anything a gp3 EBS
+# volume could not have done: one pod, one mount, one file. THIS file is the
+# part that needs a shared parallel filesystem underneath it.
+#
+# The payoff is a single command. Run it once the Deployment is Running:
+#
+#   kubectl exec deploy/weka-rwx-demo -- sh -c \
+#     "awk '{print \$2}' /data/shared.log | sort | uniq -c"
+#
+# Three distinct hostnames, counted out of one file, read from a pod that only
+# wrote a third of the lines in it.
+#
+# WHAT THAT ACTUALLY DEMONSTRATES
+#
+#   1. A block volume cannot do this. RWX on EBS does not exist; RWX on a
+#      block device with a single-writer filesystem on top corrupts. The three
+#      replicas here hold the same file open for append CONCURRENTLY, from
+#      three different kernels, with no coordination between them and no
+#      locking in the workload -- and the line count adds up exactly. That is
+#      POSIX semantics being enforced by the filesystem across nodes, which is
+#      the whole reason to put WEKA behind a PVC.
+#
+#   2. It exercises the CSI node plugin on EVERY node in the group, not just
+#      the one the scheduler happened to pick. 06 mounts on exactly one node,
+#      so a node whose WekaClient never joined, or whose CSI node plugin pod is
+#      missing, passes the smoke test untouched and then breaks the first real
+#      workload that lands on it. The podAntiAffinity below forces one replica
+#      per node, which turns that latent per-node failure into a Pending or
+#      ContainerCreating replica you can see immediately.
+#
+# REQUIRES AT LEAST 3 CLIENT NODES.
+#
+# `client_node_count` defaults to 3 in variables.tf, but
+# terraform.tfvars.example sets it to 1 to keep the demo cheap -- and the
+# verified deployment in the README ran with 1. With fewer than 3 nodes the
+# anti-affinity below cannot be satisfied and the surplus replicas sit in
+# Pending with:
+#
+#   0/1 nodes are available: 1 node(s) didn't match pod anti-affinity rules
+#
+# That is the rule working, not a bug. Either raise `client_node_count` to 3
+# and re-apply, or lower `replicas` here to the number of nodes you have --
+# and accept that at 1 replica this file proves nothing 06 did not.
+# check-manifests.sh compares `replicas` against the number of labelled client
+# nodes actually present, so it tells you before you apply.
+#
+# Clean up with: kubectl delete -f 07-rwx-multiwriter.yaml
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: weka-rwx-demo-pvc
+spec:
+  # ReadWriteMany is the point of the file. Note that the CSI plugin will hand
+  # out an RWX volume whether or not anything ever mounts it twice -- the
+  # access mode is a request, and a PVC that says RWX and is only ever used by
+  # one pod tells you nothing. The Deployment below is what actually tests it.
+  accessModes:
+    - ReadWriteMany
+  storageClassName: weka-dir
+  resources:
+    requests:
+      # 10Gi rather than 06's 1Gi because 09-fio-job.yaml runs against this
+      # same volume and lays out a test file inside it. With
+      # capacityEnforcement: HARD on the StorageClass this is a real WEKA
+      # directory quota, so an fio file larger than the quota fails with ENOSPC
+      # partway through the run rather than at submission -- keep the two
+      # numbers in step if you change either.
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: weka-rwx-demo
+spec:
+  # One per node. See the node-count note at the top of this file.
+  replicas: 3
+  selector:
+    matchLabels:
+      app: weka-rwx-demo
+  template:
+    metadata:
+      labels:
+        app: weka-rwx-demo
+    spec:
+      affinity:
+        podAntiAffinity:
+          # `required`, not `preferred`, and deliberately so. With `preferred`
+          # the scheduler will happily stack all three replicas on one node
+          # when it is the cheapest placement, and you get three hostnames
+          # that are all the same -- a demo that appears to fail while
+          # everything underneath it is healthy. Required means the placement
+          # is either what the demo claims or visibly Pending.
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: weka-rwx-demo
+              topologyKey: kubernetes.io/hostname
+      # No nodeSelector, matching 06's reasoning: every node in the
+      # weka_clients group is eligible, and letting the scheduler choose
+      # freely is what makes this a test of all of them. If you ever add a
+      # second node group WITHOUT weka.io/supports-clients=true, add
+      #   nodeSelector: { weka.io/supports-clients: "true" }
+      # here -- otherwise a replica lands on a node with no WEKA client and
+      # no CSI node plugin, and hangs in ContainerCreating on a mount that
+      # can never succeed.
+      containers:
+        - name: writer
+          # Same image and tag as 06-smoke-test.yaml. public.ecr.aws mirrors
+          # the Docker Hub official images without Docker Hub's anonymous pull
+          # rate limit, which matters when every pull in this VPC comes out of
+          # one NAT gateway.
+          image: public.ecr.aws/docker/library/busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              echo "mounted filesystem on $(hostname):"
+              df -hT /data
+              echo
+              echo "appending to /data/shared.log every 2s"
+              # Two fields, space-separated, timestamp first and hostname
+              # second -- so `awk '{print $2}'` is the hostname and nothing
+              # else. `date -Iseconds` emits no spaces, which is what keeps
+              # field 2 the hostname rather than part of the date. Do not
+              # "improve" this format without re-checking the awk command in
+              # the header comment.
+              #
+              # A single `>>` of a short line is an O_APPEND write that the
+              # filesystem serialises. Three nodes doing this concurrently
+              # with no locking is the demonstration -- if lines interleave or
+              # the count comes up short, that is a real finding, not a demo
+              # artefact.
+              while true; do
+                echo "$(date -Iseconds) $(hostname)" >> /data/shared.log
+                sleep 2
+              done
+          volumeMounts:
+            - name: weka
+              mountPath: /data
+      volumes:
+        - name: weka
+          persistentVolumeClaim:
+            claimName: weka-rwx-demo-pvc
