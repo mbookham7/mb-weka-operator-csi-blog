@@ -866,7 +866,7 @@ this design onto your own hardware).
 | PVC stuck in `Pending` | The CSI controller cannot reach the WEKA REST API, or `endpoints` is malformed | `kubectl describe pvc <name>` and the `csi-wekafs-controller` logs. Confirm **TCP 14000** backend↔node. Then decode the secret — a trailing newline or a space after a comma decodes cleanly and fails to parse:<br>`kubectl -n weka-operator-system get secret csi-wekafs-api-secret -o jsonpath='{.data.endpoints}' \| base64 -d; echo` |
 | PVC `Pending`, and the API is definitely reachable | `scheme` is `http` | HTTPS is **mandatory** from WEKA 4.3.0. `printf '%s' 'https' \| base64` |
 | Pod won't mount, PVC is `Bound` | The CSI node plugin and the `WekaClient` disagree about which nodes are eligible | Both must select the **same** label. `kubectl get nodes -L weka.io/supports-clients`, then confirm the CSI node plugin DaemonSet has a pod on the node the workload landed on. A node with a client and no plugin (or the reverse) provisions fine and never mounts. |
-| Client pods never start / stay `Pending` | HugePages or the CPU manager policy | `kubectl describe pod` — Pending on `hugepages-2Mi` means the reservation did not apply. `kubectl get node <n> -o json \| jq '.status.allocatable'`. Then on the node: `/var/log/weka-node-prep.log`, `cat /proc/sys/vm/nr_hugepages`, and `grep cpuManager /etc/kubernetes/kubelet/config.json`. Remember **user data only runs at first boot** — if you changed `node-userdata.tf`, existing nodes still have the old settings and must be recycled. |
+| Client pods never start / stay `Pending` | HugePages or the CPU manager policy | `kubectl describe pod` — Pending on `hugepages-2Mi` means the reservation did not apply. `kubectl get node <n> -o json \| jq '.status.allocatable'`. Then on the node: `/var/log/weka-node-prep.log`, `cat /proc/sys/vm/nr_hugepages`, and `grep cpuManager /etc/kubernetes/kubelet/config.json`. Remember **user data only runs at first boot** — a running node never re-reads it. You do not have to recycle the nodes yourself, though: a `node-userdata.tf` change produces a new launch template version, the module moves the LT default version, and EKS rolls the whole group on `terraform apply`. See the churn warning at the top of `node-userdata.tf` — with no PodDisruptionBudget on the WEKA clients, that roll is worth planning rather than discovering. |
 | Client pod `CrashLoopBackOff`, driver build errors | No kernel headers for the running kernel | `/var/log/weka-node-prep.log` will show the `dnf install` warning. `driversDistService: https://drivers.weka.io` is the fallback — confirm the node has egress to it. |
 | Client joins, then throughput is terrible | **UDP not open**, or the backend→client frontend range is missing, or pause frames are on | The single most common one. Confirm the **UDP** rule on `14000–16059` exists, and that it is self-referencing so backends can originate connections *to* client frontend ports. A cloud/bare-metal port matrix mix-up looks identical. |
 | Backends launch, cluster never forms | Bad or expired `get_weka_io_token`, or no egress | SSH to a backend and read `/var/log/cloud-init-output.log` — a failed release download is unmissable there. Confirm the NAT gateway exists and the private route table points at it. |
@@ -993,7 +993,17 @@ Called out so you do not have to guess which corners were cut:
 - **Single NAT gateway** — a cost choice, and an AZ-level single point of
   failure for egress.
 - **The node group is fixed-size with no PodDisruptionBudget** or drain
-  handling for the WEKA clients.
+  handling for the WEKA clients. Worth pairing with the next point, because
+  together they mean an ordinary Terraform change can cycle every storage
+  client in the cluster unprotected.
+- **Any change to `node-userdata.tf` rolls the whole node group.** The two
+  heredocs in that file are launch-template user data, so editing them — a
+  real value *or* a comment inside the heredoc — changes the LT, and
+  `update_launch_template_default_version` defaults to `true`, so EKS performs
+  a rolling replacement on the next `apply`. The file now keeps its prose in
+  Terraform comments rather than inside the heredocs specifically so that
+  documentation edits are not deployments; see "Payload vs commentary" there
+  before adding a comment.
 
 ---
 
