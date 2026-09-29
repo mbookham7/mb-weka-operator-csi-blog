@@ -37,8 +37,10 @@ assumed.
 | Teardown: PVs | both PVs auto-deleted on PVC delete, i.e. the CSI plugin removed the backing WEKA directories |
 | Teardown: first pass | **22m43s**, 168 of 173 resources, then failed on `InvalidPlacementGroup.InUse` — exactly as documented. The shared security group alone took **14m10s** |
 | Teardown: second pass | **~40s**, the remaining 5 (placement group, VPC, two subnets, `time_static`), exit 0, state empty |
-| Teardown: orphans | none billing. Instances `terminated`, volumes and ENIs gone, NAT gateway `deleted`, budget destroyed with the stack. 8 KMS keys and 4 secrets left `PendingDeletion` / scheduled, which is expected |
+| Teardown: orphans | none billing. Instances `terminated`, volumes and ENIs gone, NAT gateway `deleted`, budget destroyed with the stack. 8 KMS keys left `PendingDeletion` (normal). 4 secrets left scheduled for deletion — **their values stay restorable and readable for the whole 30-day window**, so they were purged by hand afterwards; see the two rows below |
 | Teardown: tag sweep | the Resource Groups Tagging API still listed **90 resources** tagged `Project=weka-eks-demo` with state empty and everything gone — all of them terminated or pending deletion. Do not trust it as an orphan check |
+| Teardown: purging a secret | **`delete-secret --force-delete-without-recovery` is a no-op on a secret already scheduled for deletion** — which is the only state `terraform destroy` leaves them in. Run against all four: the call returned success *and the secret name*, and three of the four were still present afterwards with a freshly re-stamped `DeletedDate`. `restore-secret` then force-delete cleared all three immediately. The fourth happened to succeed first time, so the failure is not even consistent |
+| Teardown: `list-secrets` lag | reported **4 secrets remaining when 3 were already gone**. `describe-secret` returning `ResourceNotFoundException` is the only reliable confirmation — the same "trust the service API, not the aggregate view" lesson as the tag sweep above |
 
 Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 (first attempt clean — no `InsufficientRolePermissions` race this time),
