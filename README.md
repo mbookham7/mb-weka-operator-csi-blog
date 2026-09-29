@@ -27,6 +27,44 @@ hour — comfortably over $500 a day.** Check the AWS Pricing Calculator for
 current rates before you apply, and read the [Teardown](#teardown) section
 *before* you start, not after.
 
+`cost-controls.tf` gives you two guardrails. **Neither of them stops
+anything** — the only real control is still `terraform destroy`:
+
+- **An `ExpiresAt` tag on every resource**, computed from the actual creation
+  time plus `ttl_hours` (default 8). Nothing reaps it. It exists so that
+  "should this still be running?" is answerable at a glance, which in a shared
+  account it otherwise is not:
+
+  ```bash
+  aws ec2 describe-instances \
+    --filters "Name=tag:ManagedBy,Values=terraform" \
+    --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='ExpiresAt']|[0].Value]" \
+    --output text
+  ```
+
+- **A daily budget alarm**, at 50% / 100% / 200% of `budget_limit_usd`
+  (default 600 — roughly one full day at the defaults). Daily rather than
+  monthly because the risk here is "it was left running", which a monthly
+  budget hides for a fortnight and then resets.
+
+  **It is only created if you set `budget_notification_emails`.** A budget
+  with no subscribers is legal, shows in the console, and notifies nobody —
+  that looks like protection while providing none, so this repo declines to
+  create one. Each address gets a confirmation email it must accept before any
+  alert is delivered.
+
+  Note the resolution: **AWS Budgets refreshes cost data roughly three times a
+  day.** This is a backstop measured in hours, not a circuit breaker. By the
+  time it fires you have already spent the money it is warning you about. It
+  catches "left it up overnight", which is the realistic failure.
+
+The budget is account-wide by default. Scoping it to the `Project` tag is a
+one-line change (`budget_filter_by_project_tag`), but **a tag-filtered budget
+can silently report $0**: cost allocation tags have to be activated by hand in
+Billing → Cost allocation tags, activation takes up to 24 hours, and it is not
+retroactive. A guardrail that quietly measures nothing is worse than none, so
+the default is the scope that cannot fail that way.
+
 `i3en.6xlarge` is 24 vCPUs. Six of them plus three `m6i.8xlarge` is **240
 vCPUs**, so you will very likely need a quota increase — see
 [Prerequisites](#prerequisites).
@@ -138,6 +176,7 @@ level up at the repo root.
 | `weka.tf` | The WEKA backend cluster |
 | `eks.tf` | EKS control plane and the `weka_clients` managed node group |
 | `node-userdata.tf` | HugePages, reserved ports, kernel headers, CPU pinning. **The most important file here.** |
+| `cost-controls.tf` | `ExpiresAt` tags on every resource, and an optional daily budget alarm |
 | `outputs.tf` | Names, secret ids, and a `next_steps` runbook |
 | `manifests/` | Applied by hand after `apply`, **in numeric order** — `02-weka-nics-policy.yaml` must precede the `WekaClient` |
 | `manifests/check-manifests.sh` | Drift check: compares the manifests against `terraform output manifest_values`. Run it before applying |

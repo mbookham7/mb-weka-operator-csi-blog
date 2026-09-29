@@ -95,5 +95,5 @@ module "weka" {
   # /tmp/<prefix>-<cluster_name>-private-key.pem locally.
   key_pair_name = var.key_pair_name
 
-  tags_map = var.tags
+  tags_map = local.common_tags
 }

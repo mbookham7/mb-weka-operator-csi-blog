@@ -18,7 +18,7 @@ resource "aws_security_group" "weka" {
   description = "Shared by WEKA backends and EKS worker nodes: WEKA data path, control path, and Secrets Manager endpoint access"
   vpc_id      = module.vpc.vpc_id
 
-  tags = merge(var.tags, {
+  tags = merge(local.common_tags, {
     Name = "${local.name}-weka-shared"
   })
 

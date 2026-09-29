@@ -139,6 +139,39 @@ client_root_volume_size = 200
 system_cpu_sibling_index = 16
 
 # ---------------------------------------------------------------------------
+# Cost controls
+# ---------------------------------------------------------------------------
+# This deployment runs at roughly $20-25/hour. Two guardrails, neither of
+# which stops anything -- they are a label and a tripwire. The only real
+# control is still `terraform destroy`.
+
+# How long you EXPECT this to live. Stamped onto every resource as an
+# `ExpiresAt` tag, computed from the actual creation time. Nothing reaps
+# anything; the tag exists so an abandoned deployment is identifiable.
+ttl_hours = 8
+
+# THE BUDGET IS ONLY CREATED IF YOU LIST AN ADDRESS HERE. A budget with no
+# subscribers looks like protection and provides none, so this repo does not
+# create one. AWS sends each address a confirmation email that must be
+# accepted before any alert is delivered.
+#
+# budget_notification_emails = ["you@example.com"]
+
+# DAILY spend treated as 100%, with alerts at 50% / 100% / 200%. Daily, not
+# monthly: the risk is "it was left running", which a daily budget catches
+# every day. 600 is about one full day at the defaults -- lower it if you
+# only intend to run the demo for an hour.
+budget_limit_usd = 600
+
+# Scope the budget to `Project = <tags.Project>` instead of the whole account.
+# LEFT OFF DELIBERATELY: cost allocation tags must be activated by hand in
+# Billing, activation takes up to 24h and is not retroactive, so a filtered
+# budget can silently measure $0 -- worse than no budget. Turn this on only
+# for a shared account, and only after confirming in Cost Explorer that the
+# filter returns non-zero.
+# budget_filter_by_project_tag = true
+
+# ---------------------------------------------------------------------------
 tags = {
   Project   = "weka-eks-demo"
   ManagedBy = "terraform"

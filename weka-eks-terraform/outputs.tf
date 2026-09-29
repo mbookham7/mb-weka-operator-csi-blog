@@ -217,6 +217,12 @@ output "next_steps" {
     ============================================================================
      COST: ${var.weka_cluster_size} x ${var.weka_instance_type} +
      ${var.client_node_count} x ${var.client_instance_type} + a NAT gateway.
+
+     Every resource is tagged ExpiresAt = ${local.ttl_expires_at}
+     (ttl_hours = ${var.ttl_hours}). NOTHING ENFORCES THAT TAG -- no Lambda
+     reaps anything. It is there so an abandoned deployment is identifiable,
+     not so it cleans itself up.
+
      Destroy this when you are done, and then check the console -- see the
      README teardown section.
     ============================================================================

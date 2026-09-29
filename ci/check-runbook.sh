@@ -74,6 +74,8 @@ stubs = {
     '${module.weka.weka_cluster_admin_password_secret_id}': 'weka/poc/weka-password',
     '${module.eks.cluster_name}': 'weka-poc-eks',
     '${local.weka_hugepages_gib}': '7',
+    '${local.ttl_expires_at}': '2026-01-01T12:00:00Z',
+    '${var.ttl_hours}': '8',
 }
 for k, v in stubs.items():
     body = body.replace(k, v)

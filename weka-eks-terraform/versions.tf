@@ -20,5 +20,15 @@ terraform {
       source  = "hashicorp/aws"
       version = ">= 6.59"
     }
+
+    # cost-controls.tf uses time_static to stamp a creation time once, rather
+    # than timestamp() which re-evaluates on every plan and leaves every
+    # resource showing a permanent tag diff. Already present in
+    # .terraform.lock.hcl at 0.14.1 because a child module requires it, so
+    # this constraint adds a declaration rather than a download.
+    time = {
+      source  = "hashicorp/time"
+      version = ">= 0.9"
+    }
   }
 }

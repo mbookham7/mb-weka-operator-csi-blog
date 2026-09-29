@@ -47,5 +47,5 @@ module "vpc" {
     "kubernetes.io/role/elb" = "1"
   }
 
-  tags = var.tags
+  tags = local.common_tags
 }

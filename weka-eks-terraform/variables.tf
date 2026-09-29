@@ -142,6 +142,105 @@ variable "key_pair_name" {
   default     = null
 }
 
+# ---------------------------------------------------------------------------
+# Cost controls
+# ---------------------------------------------------------------------------
+
+variable "ttl_hours" {
+  description = <<-EOT
+    How long this deployment is EXPECTED to live, in hours. Used to compute the
+    `ExpiresAt` tag on every resource, from the actual creation time.
+
+    Nothing enforces it. No Lambda reaps anything, no Config rule fires. It is
+    a label, and its job is to make "should this still exist?" answerable at a
+    glance -- which in a shared account it otherwise is not. Pair it with a
+    periodic sweep:
+
+      aws ec2 describe-instances \
+        --filters "Name=tag:ManagedBy,Values=terraform" \
+        --query "Reservations[].Instances[].[InstanceId,Tags[?Key=='ExpiresAt']|[0].Value]" \
+        --output text
+
+    Default 8 hours, because this is a demo you stand up, record, and destroy
+    in a day -- not a week.
+  EOT
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.ttl_hours > 0 && var.ttl_hours <= 720
+    error_message = "ttl_hours must be between 1 and 720. If this deployment genuinely needs to live longer than a month, it is not the throwaway demo this repo is written for -- and it should have remote state and a real teardown plan first."
+  }
+}
+
+variable "budget_limit_usd" {
+  description = <<-EOT
+    DAILY spend, in USD, that this deployment's budget alarm treats as 100%.
+
+    Daily rather than monthly on purpose: the risk this guards against is "it
+    was left running", which a daily budget catches every day and a monthly
+    one hides for a fortnight. At the defaults the deployment burns roughly
+    $20-25/hour, so a full day is around $500-600 -- the default here is 600,
+    i.e. "a whole day of full spend". Alerts fire at 50%, 100% and 200%.
+
+    Lower it if you intend to run the demo for an hour and want to hear about
+    anything more than that.
+  EOT
+  type        = number
+  default     = 600
+
+  validation {
+    condition     = var.budget_limit_usd > 0
+    error_message = "budget_limit_usd must be greater than zero."
+  }
+}
+
+variable "budget_notification_emails" {
+  description = <<-EOT
+    Email addresses to alert when the daily budget thresholds are crossed.
+
+    THE BUDGET IS ONLY CREATED IF THIS IS NON-EMPTY. A budget with no
+    subscribers is legal, shows up in the console, and notifies nobody -- it
+    looks like protection while providing none, so this repo does not create
+    one. No addresses, no budget.
+
+    Each address gets an AWS confirmation email it must accept before any
+    alert is delivered. An unconfirmed subscription is silent, so confirm it
+    before you rely on it.
+
+    Note that AWS Budgets refreshes cost data around three times a day. This
+    is a backstop measured in hours, not a circuit breaker -- by the time it
+    fires, the money is spent.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for e in var.budget_notification_emails : can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", e))])
+    error_message = "budget_notification_emails must all look like email addresses. AWS accepts a malformed one at apply time and simply never delivers to it."
+  }
+}
+
+variable "budget_filter_by_project_tag" {
+  description = <<-EOT
+    Scope the budget to resources tagged `Project = <tags["Project"]>` instead
+    of to the whole account.
+
+    DEFAULT IS FALSE, DELIBERATELY. A tag-filtered budget can silently report
+    zero: cost allocation tags must be activated by hand in Billing -> Cost
+    allocation tags, activation takes up to 24 hours, and it is not
+    retroactive. A cost guardrail that quietly measures nothing is worse than
+    none at all, so the default is the scope that cannot fail that way.
+
+    Turn it on when you are deploying into a shared account where an
+    account-wide budget would be buried in unrelated spend -- but activate the
+    tag first, and confirm in Cost Explorer that the filter returns non-zero
+    before trusting it.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "weka_filesystem_name" {
   description = "WEKA filesystem the CSI StorageClass provisions directories inside. Must match `filesystemName` in manifests/05-storageclass-dir.yaml. The module creates one for you when set_default_fs is true, but confirm the actual name with `weka fs` on a backend rather than assuming it."
   type        = string

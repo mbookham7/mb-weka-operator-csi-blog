@@ -192,9 +192,9 @@ module "eks" {
         },
       ]
 
-      tags = var.tags
+      tags = local.common_tags
     }
   }
 
-  tags = var.tags
+  tags = local.common_tags
 }
