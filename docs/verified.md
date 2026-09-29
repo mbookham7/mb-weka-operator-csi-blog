@@ -6,61 +6,45 @@ This is not a sketch. It was deployed in `eu-west-1` and taken all the way to a
 mounted `ReadWriteMany` PVC, and every number below was observed rather than
 assumed.
 
-> ### ⚠️ Observed on WEKA 4.4.37. Not yet re-verified on 5.1.
+> ### Re-verified on WEKA 5.1.32.19, 2026-09-29.
 >
-> The repo now targets **5.1.32.19** (see [The WEKA release itself is not a
-> module version](versions.md#the-weka-release-itself-is-not-a-module-version)). The table
-> below is the **4.4.37** run, reproduced verbatim, and is left that way on
-> purpose: re-stating a 4.4 measurement as though it had been taken on 5.1
-> would make the most valuable thing in this repo untrue.
+> This table was previously a 4.4.37 run carrying a warning that 5.1 was
+> unmeasured. It has now been re-deployed from empty on **WEKA 5.1.32.19,
+> operator v1.16.0, EKS 1.32**, with `client_node_count = 3` and the node
+> group pinned to the backends' AZ, and every row below re-observed.
 >
-> What is expected to change on 5.1, and is therefore **unmeasured** here:
->
-> - the `WekaIO v…` version string, obviously
-> - the client pod's HugePages request, and with it the
->   `client_hugepages_headroom_mib` default — the `6256Mi`-for-4-cores figure
->   below is a 4.4 operator/client observation and the arithmetic is not
->   documented anywhere, so it has to be re-measured rather than predicted
-> - the port count the client allocates from `basePort`, which drops to 260
->   from 500 with Operator 1.10 + WEKA 5.1.0 (the reserved range is wide enough
->   for both — see the comment in `node-userdata.tf`)
-> - timings, since the `weka-in-container` image is a different size
->
-> Separately from the release change, **the topology has moved since this run
-> too**: the client node group is now pinned to the backends' availability
-> zone (see [The client node group](node-group.md)). The verified deployment
-> used `client_node_count = 1`, so it had one node and no cross-AZ path to
-> speak of — but any figure you take from a multi-node run today is on a
-> different network layout from the one above.
->
-> Everything else in the table is a property of the VPC, the node prep and the
-> CSI plumbing rather than of the WEKA release, so it is expected to hold. That
-> is an expectation, not a measurement. **Re-run the deployment on 5.1 and
-> replace this block with the observed values before publishing anything off
-> this table.**
+> Two rows changed and are noted inline. What did **not** change is worth
+> saying: the HugePages figure, the CPU pinning, the `weka-nics` count, the
+> quota enforcement and the PV auto-delete are all identical to 4.4.37.
 
-| Check | Observed (4.4.37) |
+| Check | Observed (5.1.32.19) |
 |---|---|
-| WEKA cluster | `WekaIO v4.4.37` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (Fully protected)` · 36.82 TiB |
-| Client joined | `clients: 1 connected`; `weka cluster container` shows the EKS node `UP`, 4 cores, 6.35 GB |
-| HugePages | node `hugepages-2Mi` allocatable `7Gi`, `HugePages_Total: 3584` |
-| CPU pinning | node `cpu` allocatable **30 of 32** — CPU 0 and its sibling excluded from the shared pool, which is `strict-cpu-reservation` doing its job |
-| HT sibling | `/sys/devices/system/cpu/cpu0/topology/thread_siblings_list` = `0,16` on `m6i.8xlarge`, confirming the `system_cpu_sibling_index` default |
-| Data NICs | `weka.io/weka-nics: 4` advertised after the `ensure-nics` policy reached `Done` |
-| ENI ownership | all 4 data NICs tagged `weka_reason=ensure_nics`; **zero** CNI-created secondary ENIs, so nothing for WEKA to poach |
-| PVC | `Bound`, `RWX`, 1Gi on `weka-dir`; `df -hT` inside the pod reports `default wekafs 1.0G` |
-| Quota | the mount shows 1.0G, so `capacityEnforcement: HARD` is applying a real quota |
-| Teardown | PV auto-deleted, i.e. the CSI plugin removed the backing WEKA directory |
+| WEKA cluster | `WekaIO v5.1.32.19` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (fully protected)` · hot spare 7.36 TiB · 36.82 TiB |
+| Clients joined | **3 connected** (was 1 — this run used `client_node_count = 3`) |
+| AZ placement | all 6 backends **and** all 3 clients in `eu-west-1a`; no cross-AZ storage path |
+| HugePages | node `hugepages-2Mi` allocatable `7Gi` on all three nodes |
+| CPU pinning | node `cpu` allocatable **30 of 32** on all three — `strict-cpu-reservation` doing its job |
+| maxPods | `29`, matching the CNI's addressable IPs with `MAX_ENI=1` |
+| Instance facts (EC2 API) | `m6i.8xlarge`: 32 vCPU, 16 cores, 2 threads/core, 8 ENIs, 30 IPv4/ENI — so 29 addressable pods and sibling index 16. All five `preflight.tf` preconditions passed at plan time |
+| Data NICs | `weka.io/weka-nics: 4` on all three nodes after the `ensure-nics` policy reached `Done` |
+| Beat 2 (negative case) | **reproduces**, but later than expected: `0/3 nodes are available: 1 Insufficient weka.io/weka-nics`. ~8 min after applying `03`, because a discovery-mode pod pulls the image first. Policy applied → weka-nics on all 3 nodes at 40 s → 0 unschedulable at 50 s |
+| PVC | `Bound`, `RWX`, 1Gi on `weka-dir`; `df -hT` reports `default wekafs 10.0G` for the 10Gi demo claim |
+| Quota | the mount reports the PVC's size, not the cluster's — `capacityEnforcement: HARD` applying a real quota |
+| RWX multi-writer | 3 replicas, one per node. Single snapshot: **100 lines, 100 summed across 3 distinct hostnames, 0 malformed** — concurrent `O_APPEND` with no lost or torn writes |
+| Persistence across node loss | sentinel written on one node, pod deleted, node cordoned, pod rescheduled elsewhere, sentinel read back intact |
+| fio job | ran to completion: `fio-3.39` from Alpine community, all three stanzas as separate run groups, 0 ENOSPC inside the quota. **No figures recorded here — see the Fact Note requirement** |
+| PodDisruptionBudget | **does not work for the client pods.** `disruptionsAllowed: 0` permanently, `wekacontainers.weka.weka.io does not implement the scale subresource`; every eviction refused. The node group's own `maxUnavailablePercentage: 33` already paces rolls |
+| Teardown | both PVs auto-deleted on PVC delete, i.e. the CSI plugin removed the backing WEKA directories |
 
-Timings, for planning, also measured on the 4.4.37 run: ~20 min for
-`terraform apply`, a further ~7 min for the WEKA cluster to clusterize, ~90 s
-for a node to register, and a few minutes for the multi-GiB
-`weka-in-container` pull. Budget an hour from nothing to a mounted PVC.
+Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
+(first attempt clean — no `InsufficientRolePermissions` race this time),
+**~3 min** for the WEKA cluster to clusterize after that, ~2 min for nodes to
+register, and **~5 min** for the multi-GiB `weka-in-container` pull on a cold
+node. From `apply` to a mounted RWX PVC: about **50 minutes**, most of it
+waiting on image pulls and the client join.
 
-Every row in the table was re-verified on a second, independent 4.4.37
-deployment from an empty state — including the 3584-page HugePages
-reservation from a cold boot, and the addon ordering in a single `apply` pass.
-Neither run was on 5.1.
+That is faster than the hour the 4.4.37 run suggested, but budget the hour
+anyway — the pull dominates and it comes over a single NAT gateway.
 
 ---
 

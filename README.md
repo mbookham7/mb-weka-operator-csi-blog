@@ -253,13 +253,20 @@ up at the repo root.
 
 This is not a sketch. It was deployed in `eu-west-1` and taken all the way to
 a mounted `ReadWriteMany` PVC, with every number observed rather than assumed
-— a healthy 6-backend cluster, HugePages and CPU pinning confirmed on the
-node, a `Bound` RWX PVC reporting `wekafs` with an enforced quota, and a PV
+— and **re-verified end to end on WEKA 5.1.32.19 on 2026-09-29**, with three
+client nodes pinned to the backends' availability zone.
+
+Confirmed on that run: a healthy 6-backend cluster at `3+2 (fully protected)`;
+HugePages `7Gi` and `cpu 30/32` on every node; `weka.io/weka-nics: 4` after
+the policy; a `Bound` RWX PVC reporting `wekafs` with an enforced quota; three
+pods on three nodes appending to one file with **100 lines and 100 accounted
+for**; data read back after its node was cordoned out; and both PVs
 auto-deleted on teardown.
 
-**Those observations were made on WEKA 4.4.37. The repo now targets 5.1.32.19
-and has not been re-verified on it.** The full table, and exactly which rows
-are expected to move, are in **[Verified end to end](docs/verified.md)**.
+Two things that run counter to expectation are recorded there too — the
+negative case takes about **8 minutes** to appear rather than seconds, and a
+**PodDisruptionBudget over the client pods does not work at all**. The full
+table is in **[Verified end to end](docs/verified.md)**.
 
 ---
 

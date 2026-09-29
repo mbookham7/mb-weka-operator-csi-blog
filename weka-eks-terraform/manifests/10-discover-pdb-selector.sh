@@ -126,6 +126,33 @@ if not winners:
              "  pods. Look at the full label sets by hand:\n"
              f"    kubectl -n {ns} get pods --show-labels")
 
+# --- choosing between several exact selectors ---------------------------
+#
+# Usually more than one is exact TODAY. They are not equally durable, so the
+# tie is broken deliberately rather than alphabetically:
+#
+#   1. Prefer the operator's own `weka.io/` labels over generic `app=` /
+#      `app.kubernetes.io/` ones. A bare `app=weka` is exact only because
+#      this repo's backends are EXTERNAL -- run an operator-managed
+#      WekaCluster in the same namespace and it would match the backend
+#      containers too, budgeting them together with the clients.
+#
+#   2. Among those, prefer a label that does NOT embed a resource name.
+#      `weka.io/client-name=<your WekaClient>` is exact but breaks the day
+#      somebody renames the CR; `weka.io/mode=client` describes the role.
+def rank(pairs):
+    keys = [k for k, _ in pairs]
+    weka_ns   = all(k.startswith("weka.io/") for k in keys)
+    names_a_cr = any(k.endswith("-name") for k in keys)
+    return (0 if weka_ns else 1, 1 if names_a_cr else 0, len(pairs), keys)
+
+winners.sort(key=rank)
+if len(winners) > 1:
+    print("\n==> Several selectors are exact today. Preferring the operator's own")
+    print("    weka.io/ labels, and avoiding ones that embed a resource name:")
+    for w in winners:
+        print("      " + ",".join(f"{k}={v}" for k, v in w))
+
 best = winners[0]
 sel_yaml = "\n".join(f"      {k}: {v}" for k, v in best)
 print(f"\n==> Use this selector:\n\n    matchLabels:\n{sel_yaml}\n")

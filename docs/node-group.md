@@ -100,90 +100,83 @@ That is covered in [Node preparation](node-preparation.md) — including why
 the prose in that file deliberately lives *outside* the heredocs, so that
 editing a comment cannot trigger a roll.
 
-### What paces it
+### What paces it — and it is not a PodDisruptionBudget
 
-[`10-poddisruptionbudgets.yaml`](../weka-eks-terraform/manifests/10-poddisruptionbudgets.yaml)
-sets `maxUnavailable: 1`, so the drain phase of a roll takes one client at a
-time and waits.
+The obvious answer is a PDB over the client pods. **It was tried against a
+real cluster and it is worse than useless.** Measured on operator v1.16.0 /
+WEKA 5.1.32.19 / EKS 1.32:
 
-`maxUnavailable` is an **integer, not a percentage**, and that is deliberate.
-A percentage requires the controller owning the pods to expose a scale
-subresource so Kubernetes can compute the expected count. The operator's
-per-node client containers do not. A percentage against pods it cannot size
-does not fail safe — it wedges every drain on the cluster, permanently.
+```
+kubectl -n weka-operator-system get pdb
+NAME              MAX UNAVAILABLE   ALLOWED DISRUPTIONS
+weka-client       1                 0
+weka-node-agent   1                 0
 
-### You have to fill in the selector
-
-The file ships with `app: REPLACE_ME`.
-
-That is not laziness. The WEKA client pods are created by the operator's
-controller at runtime, not by the Helm chart, so their labels are not in the
-chart and vary by operator version. (Checked: the chart carries selectors
-only for `weka-operator`, `weka-node-agent` and `weka-cluster-monitoring` —
-even the CSI workloads are created by the operator.) A guessed selector would
-produce a PDB that matches nothing, and **a PDB matching nothing is silently
-inert**: it exists, `kubectl get pdb` shows it, it reports allowed
-disruptions, and it restrains precisely nothing.
-
-Once the operator is running, derive it:
-
-```bash
-cd weka-eks-terraform/manifests
-./10-discover-pdb-selector.sh            # report what it would use
-./10-discover-pdb-selector.sh --write    # and patch the manifest
+weka-client:      DisruptionAllowed=False  reason=SyncFailed
+                  "wekacontainers.weka.weka.io does not implement
+                   the scale subresource"
+weka-node-agent:  DisruptionAllowed=False  reason=SyncFailed
+                  "daemonsets.apps does not implement the scale subresource"
 ```
 
-The script identifies the client pods by their **image** rather than by any
-label — the labels being the unknown — then tests candidate selectors against
-the live cluster and keeps only one that selects *exactly* those pods.
+`disruptionsAllowed: 0` never rises, because the disruption controller cannot
+work out an expected pod count. An actual eviction attempt:
 
-That middle step is the part that is easy to get wrong by hand. Too broad is
-its own failure: a selector that also catches the CSI node plugin or the node
-agent budgets them together and blocks drains for the wrong reason. Too
-narrow matches nothing, which is silently inert.
-
-By hand, if you prefer:
-
-```bash
-kubectl -n weka-operator-system get pods --show-labels
-
-kubectl -n weka-operator-system get pod <client-pod> \
-  -o jsonpath='{.metadata.labels}' | python3 -m json.tool
+```
+Error from server (TooManyRequests): Cannot evict pod as it would violate
+the pod's disruption budget.
 ```
 
-`./check-manifests.sh` fails while the placeholder is there, and — against a
-live cluster — fails if a selector matches no pods. See
-[Continuous integration](ci.md).
+and after deleting the PDBs the same eviction returned `201 Success`. So the
+budget does not slow a node-group roll down — **it stops it.** A managed node
+group update would hang until it timed out, on the very cluster the PDB was
+added to protect.
 
-The second PDB in the file, for `app: weka-node-agent`, needs no editing:
-that label *is* in the chart, as the selector on its `PodMonitor`.
+This is **not** the integer-versus-percentage problem. Both budgets above used
+an integer `maxUnavailable: 1`. The constraint is that the owning controller
+must implement the `scale` subresource, and neither a `WekaContainer` CR nor a
+`DaemonSet` does.
 
-### What a PodDisruptionBudget does not do
+`manifests/10-poddisruptionbudgets.yaml` therefore defines no objects. It is
+kept as a file so the finding is where somebody would otherwise re-add them.
 
-This is the part worth reading twice, because a PDB invites more confidence
-than it earns:
+### What actually paces it
 
-- **It is only consulted by the eviction API.** A managed node group update
-  drains nodes and respects PDBs; so does `kubectl drain`. A hard instance
-  termination — spot reclaim, an AZ event, someone clicking Terminate — does
-  not evict anything, and no PDB is involved.
-- **DaemonSet pods are not evicted during a drain, they are deleted.** A PDB
-  does not protect them. If your operator version manages the client
-  containers as a DaemonSet rather than as individually-owned pods, this file
-  will not restrain a roll at all. Check which you have:
+The node group's own update config — no PDB, no dependency on any CRD:
 
-  ```bash
-  kubectl -n weka-operator-system get pod <client-pod> \
-    -o jsonpath='{.metadata.ownerReferences[*].kind}{"\n"}'
-  ```
+```bash
+aws eks describe-nodegroup --cluster-name <cluster> --nodegroup-name <ng> \
+  --query 'nodegroup.updateConfig'
+```
+```json
+{ "maxUnavailablePercentage": 33 }
+```
 
-  `DaemonSet` means the PDB is decorative. `WekaContainer`, or no owner,
-  means it applies.
-- **It does not make a roll safe, only slower.** One client at a time still
-  means each node's pods lose their mount while that node is replaced.
-  Workloads that cannot tolerate that need their own PDBs and a
-  `ReadWriteMany` claim they can re-mount elsewhere — which is what
-  [`08-persistence-check.sh`](demo.md) demonstrates.
+Measured on this deployment. With three nodes that is **one node at a time**,
+which is exactly the pacing the PDB was meant to provide — and it was already
+in effect the whole time.
+
+To make it explicit, or to pin it at one node regardless of group size, set
+`update_config` on the node group in `eks.tf`:
+
+```hcl
+update_config = { max_unavailable = 1 }
+```
+
+To stop an ordinary Terraform edit triggering a roll at all, see
+[Node preparation](node-preparation.md) and
+`update_launch_template_default_version`.
+
+### Where a PDB does still belong
+
+Over **your own workloads** on the WEKA filesystem. Those are ordinary
+Deployments, their controller implements `scale`, and they can be rescheduled
+onto another node and re-mount the same `ReadWriteMany` claim — which is
+exactly what [`08-persistence-check.sh`](demo.md) demonstrates. The WEKA
+client containers themselves cannot be protected this way.
+
+`manifests/10-discover-pdb-selector.sh` still works if you need to build a
+selector for one of those; the selector was never the problem.
 
 ---
 

@@ -78,6 +78,7 @@ fi
 get() { printf '%s' "$vals" | python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$1"; }
 
 fail=0
+NS_CHECK="weka-operator-system"
 
 # --- what does the REPOSITORY say, as opposed to the working tree? -------
 #
@@ -168,16 +169,6 @@ ym_list() { ruby -ryaml -e '
   f = File.read(ARGV[0])
   docs = (Psych::VERSION.split(".")[0].to_i >= 4 ? YAML.load_stream(f, aliases: true) : YAML.load_stream(f)).compact
   docs.each { |d| puts d["metadata"]["name"] if d.is_a?(Hash) && d["kind"] == ARGV[1] }
-' "$1" "$2" 2>/dev/null; }
-
-# A PDB's matchLabels rendered as the k=v,k=v that `kubectl -l` wants.
-ym_pdb_selector() { ruby -ryaml -e '
-  f = File.read(ARGV[0])
-  docs = (Psych::VERSION.split(".")[0].to_i >= 4 ? YAML.load_stream(f, aliases: true) : YAML.load_stream(f)).compact
-  d = docs.find { |x| x.is_a?(Hash) && x["kind"] == "PodDisruptionBudget" && x["metadata"]["name"] == ARGV[1] }
-  exit if d.nil?
-  m = d.dig("spec", "selector", "matchLabels") || {}
-  puts m.map { |k, v| "#{k}=#{v}" }.join(",")
 ' "$1" "$2" 2>/dev/null; }
 
 # Kubernetes/fio quantity -> bytes, so sizes written in different units can be
@@ -341,69 +332,49 @@ else
   printf '  NOTE  %-44s could not parse (fio=%s pvc=%s)\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"
 fi
 
-# --- PodDisruptionBudgets: the selector has to match something -----------
+# --- PodDisruptionBudgets: verified harmful here, and a generic trap ------
 #
-# A PDB whose selector matches no pods is SILENTLY INERT. It exists, it shows
-# ALLOWED DISRUPTIONS, `kubectl get pdb` looks healthy, and it restrains
-# nothing -- the same "looks like protection, provides none" shape as a budget
-# with no subscribers.
-#
-# The client pod labels come from the operator's controller at runtime, not
-# from the Helm chart, so 10-poddisruptionbudgets.yaml ships with a
-# REPLACE_ME selector you fill in per operator version -- the same convention
-# as joinIpPorts in 03. Offline inverts it, for the same reason: in a clean
-# checkout the placeholder is the correct committed state.
+# 10-poddisruptionbudgets.yaml deliberately defines NO objects. Measured on
+# operator v1.16.0 / WEKA 5.1.32.19: a PDB over the client pods reported
+# `disruptionsAllowed: 0` permanently, because
+# `wekacontainers.weka.weka.io does not implement the scale subresource`, and
+# every eviction was refused. It did not pace a node-group roll, it blocked
+# it. See that file for the full measurement.
 if [ -f 10-poddisruptionbudgets.yaml ]; then
-  # Inspect the PARSED SELECTOR VALUES, not the file text. The file's own
-  # header explains the REPLACE_ME convention and therefore contains the
-  # word -- a whole-file grep can never pass, however correctly the selector
-  # is filled in. Found the hard way.
-  pdb_tmp="$(mktemp)"
-  if [ "$OFFLINE" -eq 1 ]; then
-    committed_content 10-poddisruptionbudgets.yaml > "$pdb_tmp" 2>/dev/null
+  pdb_defined=$(ym_list 10-poddisruptionbudgets.yaml PodDisruptionBudget | grep -c . || true)
+  if [ "${pdb_defined:-0}" -eq 0 ]; then
+    printf '  OK    %-44s defines no PDB objects (see its header)\n' "10-poddisruptionbudgets.yaml"
   else
-    cat 10-poddisruptionbudgets.yaml > "$pdb_tmp"
+    printf '  WARN  %-44s defines %s PodDisruptionBudget(s)\n' "10-poddisruptionbudgets.yaml" "$pdb_defined"
+    printf '        %s\n' "a PDB over operator-managed WEKA pods reports disruptionsAllowed=0"
+    printf '        %s\n' "forever and blocks every eviction -- read the header before applying"
   fi
-  pdb_names=$(ym_list "$pdb_tmp" PodDisruptionBudget)
-  pdb_placeholders=0
-  for pdb in $pdb_names; do
-    case "$(ym_pdb_selector "$pdb_tmp" "$pdb")" in *REPLACE_ME*) pdb_placeholders=1 ;; esac
-  done
+fi
 
-  if [ "$OFFLINE" -eq 1 ]; then
-    if [ -z "$pdb_names" ]; then
-      printf '  NOTE  %-44s not committed yet -- nothing to check\n' "10-poddisruptionbudgets.yaml"
-    elif [ "$pdb_placeholders" -eq 1 ]; then
-      printf '  OK    %-44s committed copy still has its placeholder\n' "10-poddisruptionbudgets.yaml"
-    else
-      printf '  NOTE  %-44s selector filled in the committed copy\n' "10-poddisruptionbudgets.yaml"
-      printf '        %s\n' "operator-version specific -- check it is not just one cluster's labels"
-      printf '        %s\n' "baked into the repo. ./10-discover-pdb-selector.sh re-derives it."
-    fi
-  elif [ "$pdb_placeholders" -eq 1 ]; then
-    printf '  TODO  %-44s selector still REPLACE_ME -- the PDB will match nothing\n' "10-poddisruptionbudgets.yaml"
-    printf '        %s\n' "run ./10-discover-pdb-selector.sh --write against a live cluster"
-    fail=1
+# THE GENERIC CHECK, worth running whatever that file says: any PDB in the
+# namespace that cannot compute an expected pod count is silently blocking
+# drains. It looks healthy in `kubectl get pdb` apart from a zero.
+if [ "$OFFLINE" -eq 0 ] && kubectl version --request-timeout=8s >/dev/null 2>&1; then
+  stuck=$(kubectl -n weka-operator-system get pdb -o json 2>/dev/null \
+    | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: sys.exit()
+for i in d.get('items',[]):
+    st=i.get('status',{})
+    conds={c['type']:c for c in st.get('conditions',[])}
+    da=conds.get('DisruptionAllowed',{})
+    if st.get('disruptionsAllowed',1)==0 and da.get('status')=='False':
+        print(f\"{i['metadata']['name']}|{da.get('reason','')}|{da.get('message','')}\")
+" 2>/dev/null)
+  if [ -z "$stuck" ]; then
+    printf '  OK    %-44s none stuck at disruptionsAllowed=0\n' "PodDisruptionBudgets in $NS_CHECK"
   else
-    printf '  OK    %-44s selector filled in\n' "10-poddisruptionbudgets.yaml"
-  fi
-  rm -f "$pdb_tmp"
-
-  # Against a live cluster, prove each selector actually matches pods.
-  if [ "$OFFLINE" -eq 0 ] && kubectl version --request-timeout=8s >/dev/null 2>&1; then
-    for pdb in $(ym_list 10-poddisruptionbudgets.yaml PodDisruptionBudget); do
-      sel=$(ym_pdb_selector 10-poddisruptionbudgets.yaml "$pdb")
-      if [ -z "$sel" ] || printf '%s' "$sel" | grep -q 'REPLACE_ME'; then
-        continue
-      fi
-      n=$(kubectl -n weka-operator-system get pods -l "$sel" -o name 2>/dev/null | grep -c . || true)
-      if [ "${n:-0}" -gt 0 ]; then
-        printf '  OK    %-44s %s matches %s pod(s)\n' "pdb/$pdb selector" "$sel" "$n"
-      else
-        printf '  DRIFT %-44s %s matches NO pods -- the PDB protects nothing\n' "pdb/$pdb selector" "$sel"
-        fail=1
-      fi
+    printf '%s\n' "$stuck" | while IFS='|' read -r n r m; do
+      printf '  DRIFT %-44s disruptionsAllowed=0 (%s)\n' "pdb/$n blocks ALL evictions" "$r"
+      printf '        %s\n' "$m"
     done
+    fail=1
   fi
 fi
 

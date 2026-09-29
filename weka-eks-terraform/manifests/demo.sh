@@ -56,7 +56,20 @@ RESET_ONLY=0
 # it is the slow one by a wide margin. docs/verified.md measures the pull in
 # minutes on a cold node over a single NAT gateway.
 CLIENT_TIMEOUT="${CLIENT_TIMEOUT:-900}"
-PENDING_TIMEOUT="${PENDING_TIMEOUT:-180}"
+
+# 180s is far too short, measured on operator v1.16.0 / WEKA 5.1.32.19.
+#
+# Applying the WekaClient does NOT immediately produce an unschedulable pod.
+# The operator first runs a DISCOVERY-mode pod on each node, which requests no
+# weka.io/weka-nics and therefore schedules fine -- and which has to pull the
+# multi-GiB weka-in-container image over a single NAT gateway before it can
+# finish. Only when discovery completes does the operator create the real
+# client-mode pod, and that is the one the scheduler refuses.
+#
+# Measured end to end from `kubectl apply -f 03` to the
+# "1 Insufficient weka.io/weka-nics" message: about 8 minutes on a cold node.
+# At 180s beat 2 gave up before the teaching moment existed.
+PENDING_TIMEOUT="${PENDING_TIMEOUT:-900}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300}"
 
 usage() {
@@ -280,8 +293,11 @@ pause "apply the WekaClient with no NIC policy"
 
 run_strict "kubectl apply -f 03-weka-client.yaml"
 
-explain "Now wait for the operator to generate the client pod and for the
-scheduler to refuse it."
+explain "Now wait. This is slower than it looks like it should be: the
+operator first runs a DISCOVERY pod on each node, which schedules fine and
+has to pull the multi-GiB client image. Only when that finishes does it
+create the real client pod -- and that is the one the scheduler refuses.
+Measured at around 8 minutes on a cold node."
 
 printf '\n  waiting up to %ss for the scheduler to refuse the client pod...\n' "$PENDING_TIMEOUT"
 waited=0
