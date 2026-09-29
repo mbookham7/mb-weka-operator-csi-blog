@@ -283,11 +283,23 @@ run_strict "kubectl apply -f 03-weka-client.yaml"
 explain "Now wait for the operator to generate the client pod and for the
 scheduler to refuse it."
 
-printf '\n  waiting up to %ss for a Pending client pod...\n' "$PENDING_TIMEOUT"
+printf '\n  waiting up to %ss for the scheduler to refuse the client pod...\n' "$PENDING_TIMEOUT"
 waited=0
 while [ "$waited" -lt "$PENDING_TIMEOUT" ]; do
-  if kubectl -n "$NS" get pods --field-selector=status.phase=Pending \
-       -o name 2>/dev/null | grep -q .; then
+  # UNSCHEDULABLE, not merely status.phase=Pending.
+  #
+  # A pod that is pulling its image is ContainerCreating, and a
+  # ContainerCreating pod ALSO reports status.phase = Pending. So a phase
+  # filter here returns true the moment the CSI pods start pulling their
+  # images -- beat 2 would announce success having demonstrated nothing, on
+  # camera, while the thing it claims to show had not happened.
+  #
+  # The precise signal is the PodScheduled condition being False, which is
+  # set only when the scheduler could not place the pod.
+  if kubectl -n "$NS" get pods -o json 2>/dev/null \
+     | jq -e '[.items[] | select(.status.conditions[]?
+                | select(.type == "PodScheduled" and .status == "False"))] | length > 0' \
+       >/dev/null 2>&1; then
     break
   fi
   sleep 5
@@ -299,6 +311,7 @@ run "kubectl -n '$NS' get pods -o wide"
 explain "And the reason, straight from the scheduler. THIS is the line to read
 out loud:"
 
+run "kubectl -n '$NS' get pods -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type==\"PodScheduled\" and .status==\"False\")) | \"\(.metadata.name): \(.status.conditions[] | select(.type==\"PodScheduled\") | .message)\"'"
 run "kubectl -n '$NS' get events --field-selector reason=FailedScheduling --sort-by=.lastTimestamp | tail -5"
 
 explain "A perfectly healthy WEKA cluster. A perfectly healthy node. A pod that

@@ -163,10 +163,16 @@ ok "PVC $PVC" "$pvc_phase"
 # `set -- $(...)` rather than `mapfile`, which is bash 4 only -- macOS still
 # ships bash 3.2 as /bin/bash and this script has to run there. Node names
 # never contain whitespace, so word splitting is safe here.
+# Filter in awk, NOT in the jsonpath. `spec.unschedulable` is ABSENT on a
+# healthy node, and kubectl's jsonpath filters skip items whose field does not
+# exist -- so `[?(@.spec.unschedulable!=true)]` matches NOTHING when nothing is
+# cordoned. This script would then refuse to run on a perfectly healthy
+# cluster with "need >= 2 schedulable nodes, found 0".
 # shellcheck disable=SC2046  # deliberate word splitting on node names
 set -- $(
   kubectl get nodes -l "$NODE_LABEL" \
-    -o jsonpath='{range .items[?(@.spec.unschedulable!=true)]}{.metadata.name}{"\n"}{end}' 2>/dev/null
+    -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.spec.unschedulable}{"\n"}{end}' 2>/dev/null \
+  | awk -F= '$2 != "true" { print $1 }'
 )
 client_node_count=$#
 if [ "$client_node_count" -lt 2 ]; then

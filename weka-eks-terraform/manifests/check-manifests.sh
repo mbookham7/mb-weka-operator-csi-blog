@@ -99,14 +99,21 @@ is_tracked() { # is_tracked <path>
 
 committed_content() { # committed_content <path> -- what git would ship
   #
-  # HEAD first, then the INDEX. A file that is staged but not yet committed
-  # exists as far as `git ls-files` is concerned but has no HEAD blob, and
-  # reading an empty one would look identical to "the placeholder was
-  # removed" -- which is the wrong answer at exactly the moment someone is
-  # about to commit a new file. The index is what they are about to commit,
-  # so it is the honest thing to check.
+  # THE INDEX FIRST, then HEAD. The question this check asks is "what would
+  # git ship if I committed right now?", and that is the index.
+  #
+  # Getting the order wrong makes the leak guard useless locally, which it
+  # was: with HEAD first, staging 03-weka-client.yaml full of real backend
+  # IPs still read the OLD committed blob and reported "placeholders intact".
+  # The leak would only be caught by CI, from a clean checkout, after it had
+  # already been pushed to a public repo.
+  #
+  # For an unmodified tracked file the index equals HEAD, so this changes
+  # nothing. For a file staged but never committed there is no HEAD blob, so
+  # the index is the only answer. HEAD remains the fallback for the case
+  # where a path is in HEAD but somehow not in the index.
   if in_git; then
-    git show "HEAD:./$1" 2>/dev/null || git show ":./$1" 2>/dev/null
+    git show ":./$1" 2>/dev/null || git show "HEAD:./$1" 2>/dev/null
   else
     cat "$1" 2>/dev/null
   fi
@@ -428,9 +435,17 @@ replicas=$(ym 07-rwx-multiwriter.yaml Deployment 'spec.replicas')
 if [ "$OFFLINE" -eq 1 ]; then
   printf '  SKIP  %-44s offline mode (needs a cluster)\n' "07/08 node-count checks"
 elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
+  # Filter in awk, NOT in the jsonpath. `spec.unschedulable` is ABSENT on a
+  # healthy node -- `spec` often holds only providerID -- and kubectl's
+  # jsonpath filters skip items whose field does not exist. So
+  # `[?(@.spec.unschedulable!=true)]` matches NOTHING on a cluster with no
+  # cordoned nodes, i.e. always, and this check reported "0 schedulable
+  # nodes" against three Ready ones. Emit the value (empty when absent) and
+  # decide here.
   # shellcheck disable=SC2046  # node names never contain whitespace
   set -- $(kubectl get nodes -l weka.io/supports-clients=true \
-             -o jsonpath='{range .items[?(@.spec.unschedulable!=true)]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
+             -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.spec.unschedulable}{"\n"}{end}' 2>/dev/null \
+           | awk -F= '$2 != "true" { print $1 }')
   nodes=$#
   if [ -n "$replicas" ] && [ "$nodes" -ge "$replicas" ]; then
     printf '  OK    %-44s %s replicas <= %s schedulable client nodes\n' "07 replicas vs client nodes" "$replicas" "$nodes"
