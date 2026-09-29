@@ -355,7 +355,17 @@ Neither run was on 5.1.
 
 - **AWS credentials** with permission to create VPC, EC2, EKS, IAM, Lambda,
   Step Functions, DynamoDB and Secrets Manager resources. The WEKA module
-  builds all of those.
+  builds all of those. Two smaller permissions are easy to miss because they
+  are not about creating infrastructure:
+
+  | Permission | Needed by | If it is missing |
+  |---|---|---|
+  | `ec2:DescribeInstanceTypes` | `preflight.tf` | **`plan` fails** — the guards read the real ENI and CPU figures from the EC2 API rather than a hard-coded table |
+  | `budgets:*` | `cost-controls.tf` | **`apply` fails**, but only if you set `budget_notification_emails`; with it unset no budget is created and the permission is not needed |
+
+  `ec2:DescribeInstanceTypes` is in most read-only policies already.
+  `budgets:*` frequently is not — budgets are account-level, and a role
+  scoped to a single project often cannot touch them.
 - **A `get.weka.io` token.** Log in at <https://get.weka.io> and copy your
   token. The backends `curl` the WEKA release with it on first boot — see
   [Troubleshooting](#troubleshooting) for what a bad token looks like.
