@@ -464,8 +464,18 @@ then have to strip by hand.
 >   disappear before running `destroy`
 > - **Secrets Manager** — entries are *scheduled* for deletion, not deleted.
 >   They keep the name reserved for up to 30 days, so a re-apply under the
->   same `prefix`/`cluster_name` will fail. `--force-delete-without-recovery`
->   if you need the name back now.
+>   same `prefix`/`cluster_name` will fail. To get the name back now you need
+>   **two** calls, not one — `--force-delete-without-recovery` on its own is a
+>   no-op against a secret already in a deletion window, returning success
+>   while only re-stamping `DeletedDate`:
+>
+>   ```bash
+>   aws secretsmanager restore-secret --secret-id <id>
+>   aws secretsmanager delete-secret  --secret-id <id> --force-delete-without-recovery
+>   aws secretsmanager describe-secret --secret-id <id>   # want ResourceNotFoundException
+>   ```
+>
+>   `list-secrets` lags behind the delete; `describe-secret` is the honest check.
 > - **DynamoDB** — the cluster state table
 > - **Lambda and Step Functions** — the deploy/scale/status functions
 > - **CloudWatch log groups** — cheap, but they accumulate

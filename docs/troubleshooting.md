@@ -25,7 +25,7 @@
 | **`InsufficientInstanceCapacity` on the node group or the backends** | Both now land in a single AZ, and that zone is out of the instance type | Not a quota problem, so a quota increase will not help. The node group is pinned to the backends' AZ on purpose ([why](node-group.md)). Pick a different zone with `availability_zones` in `terraform.tfvars`, or a different instance type. |
 | `terraform init` fails on provider constraints | Mixing `weka 2.x` with `eks ~> 20.0` | Unsatisfiable — see [Module versions](versions.md). |
 | WEKA module errors with an index out of range on `module.network[0]` | `create_alb = true` without an additional subnet | `weka.tf` always passes `alb_additional_subnet_id` to avoid exactly this. |
-| Re-apply after destroy fails on a Secrets Manager name | Deleted secret names stay reserved for up to 30 days | Change `cluster_name`, or force-delete the secret: `aws secretsmanager delete-secret --secret-id <id> --force-delete-without-recovery` |
+| Re-apply after destroy fails on a Secrets Manager name | Deleted secret names stay reserved for up to 30 days | Change `cluster_name`, or purge the secret — but **`--force-delete-without-recovery` alone does not work on a secret that `terraform destroy` already scheduled for deletion.** Measured: it returns success and merely re-stamps `DeletedDate`, and the name stays reserved. You must restore it first: `aws secretsmanager restore-secret --secret-id <id>` then `aws secretsmanager delete-secret --secret-id <id> --force-delete-without-recovery`. Confirm with `describe-secret` — `ResourceNotFoundException` is the only proof it is gone; `list-secrets` lags. |
 
 ---
 
