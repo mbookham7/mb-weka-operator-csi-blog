@@ -118,7 +118,13 @@ locals {
   # execution units, L1 and L2 with the exact workload we are trying to
   # isolate. See the `system_cpu_sibling_index` variable for how to verify the
   # index on your instance type.
-  weka_reserved_cpus = "0,${var.system_cpu_sibling_index}"
+  # The ternary covers instances with no HyperThreading -- Graviton, or x86
+  # with HT disabled -- where CPU 0 has no sibling and
+  # system_cpu_sibling_index is set to 0. "0,0" would name CPU 0 twice; "0" is
+  # what is meant. For the default (index 16) this renders "0,16" exactly as
+  # before, so it is not a user-data change for anyone on the defaults. See
+  # the threads-per-core precondition in preflight.tf.
+  weka_reserved_cpus = var.system_cpu_sibling_index == 0 ? "0" : "0,${var.system_cpu_sibling_index}"
 
   # -------------------------------------------------------------------------
   # Part 1: node preparation shell script

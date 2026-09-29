@@ -177,6 +177,7 @@ level up at the repo root.
 | `eks.tf` | EKS control plane and the `weka_clients` managed node group |
 | `node-userdata.tf` | HugePages, reserved ports, kernel headers, CPU pinning. **The most important file here.** |
 | `cost-controls.tf` | `ExpiresAt` tags on every resource, and an optional daily budget alarm |
+| `preflight.tf` | Plan-time guards for the variables that are only correct for one instance type |
 | `outputs.tf` | Names, secret ids, and a `next_steps` runbook |
 | `manifests/` | Applied by hand after `apply`, **in numeric order** — `02-weka-nics-policy.yaml` must precede the `WekaClient` |
 | `manifests/check-manifests.sh` | Drift check: compares the manifests against `terraform output manifest_values`. Run it before applying |
@@ -615,6 +616,28 @@ about capacity rather than about the mismatch:
 | `weka_version` | `02`/`03` `spec.image` tag | client/backend version skew |
 | `weka_filesystem_name` | `05` `filesystemName` | PVC `Pending` forever |
 | `client_max_pods` | `MAX_ENI` in `eks.tf` | pods admitted with no IP available |
+
+Those five are drift **between Terraform and Kubernetes**. There is a second
+kind, entirely inside Terraform, and `preflight.tf` catches it at plan time:
+
+| Variable | Default | Only correct because… |
+|---|---|---|
+| `client_max_pods` | 29 | the primary ENI on `m6i.8xlarge` carries 30 IPv4 addresses, one of them the node's own |
+| `system_cpu_sibling_index` | 16 | `m6i.8xlarge` has 16 physical cores, so CPU 0's HyperThreading sibling is CPU 16 |
+| `client_weka_cores` | 4 | `ensure-nics` needs one ENI per core plus the primary, and `m6i.8xlarge` allows 8 |
+
+Change `client_instance_type` and none of those follow. `preflight.tf` reads
+the real numbers from the EC2 API (`aws_ec2_instance_type`) rather than
+carrying a table of specs typed from memory, and fails the plan with the
+correct value in the message — including the case where the instance type has
+no HyperThreading at all, so CPU 0 has no sibling to reserve.
+
+It costs nothing to run and needs only `ec2:DescribeInstanceTypes`. Because it
+is a data source, `terraform validate` does not read it, which is why CI can
+validate with no AWS credentials.
+
+`terraform output instance_type_facts` prints what AWS says about your chosen
+type — worth a look *before* changing it.
 
 `terraform output manifest_values` is the authoritative list, and there is a
 check that compares the files against it:
