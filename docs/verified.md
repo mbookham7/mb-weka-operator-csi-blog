@@ -26,6 +26,13 @@ assumed.
 >   for both — see the comment in `node-userdata.tf`)
 > - timings, since the `weka-in-container` image is a different size
 >
+> Separately from the release change, **the topology has moved since this run
+> too**: the client node group is now pinned to the backends' availability
+> zone (see [The client node group](node-group.md)). The verified deployment
+> used `client_node_count = 1`, so it had one node and no cross-AZ path to
+> speak of — but any figure you take from a multi-node run today is on a
+> different network layout from the one above.
+>
 > Everything else in the table is a property of the VPC, the node prep and the
 > CSI plumbing rather than of the WEKA release, so it is expected to hold. That
 > is an expectation, not a measurement. **Re-run the deployment on 5.1 and

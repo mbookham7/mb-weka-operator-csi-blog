@@ -129,6 +129,7 @@ to name them:
 │   ├── troubleshooting.md        symptom -> cause -> what to check
 │   ├── networking.md             ports, UDP, DPDK, MTU, hostNetwork
 │   ├── node-preparation.md       user data, and the fleet-roll hazard
+│   ├── node-group.md             AZ placement and disruption budgets
 │   ├── demo.md                   the five recorded beats
 │   ├── ci.md                     the three CI jobs and what they assert
 │   ├── cost-controls.md          TTL tag and budget alarm
@@ -206,6 +207,7 @@ The detail lives in `docs/`. Start with whichever question you have.
 |---|---|
 | **[Networking](docs/networking.md)** | Why `hostNetwork` means NetworkPolicy does not apply, the port matrix, UDP as the data path, DPDK IP sizing, MTU, pause frames |
 | **[Node preparation](docs/node-preparation.md)** | Why HugePages and CPU pinning must happen in user data — and why editing a comment in that file can roll your whole node group |
+| **[The client node group](docs/node-group.md)** | Why the nodes sit in the backends' AZ, and what paces a roll once they do |
 
 ### Guardrails
 

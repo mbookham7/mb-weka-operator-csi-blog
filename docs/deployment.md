@@ -37,6 +37,13 @@ back again. Read the [cost warning](../README.md#cost-warning) first.
   cover **240 vCPUs** at the defaults (6 × 24 + 3 × 32). The default account
   limit in a fresh region is often well below that. Request the increase early;
   it is not always instant.
+- **Capacity in a single AZ.** Both the WEKA backends and the client node
+  group land in one availability zone — see
+  [The client node group](node-group.md) — so that zone alone needs room for
+  6 × `i3en.6xlarge` plus 3 × `m6i.8xlarge`. A zone that cannot supply them
+  fails with `InsufficientInstanceCapacity`, which is an AWS capacity
+  message, not a quota one, and no quota increase fixes it. Try another AZ
+  by setting `availability_zones`.
 - EIP and NAT gateway limits, if you already have several VPCs in the region.
 
 **Local tools**

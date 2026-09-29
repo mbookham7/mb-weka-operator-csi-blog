@@ -86,6 +86,17 @@ so the default is the scope that cannot fail that way.
 `budget_filter_by_project_tag = true` opts in — activate the tag first, and
 confirm in Cost Explorer that the filter returns non-zero before trusting it.
 
+## One cost that is designed out rather than alarmed on
+
+The client node group sits in the **same AZ as the WEKA backends**, so no
+storage I/O crosses an availability zone boundary. Cross-AZ traffic is
+charged in both directions, and on a parallel filesystem every read and
+write would be on that path — for a sustained benchmark it can exceed the
+NAT gateway charge that the cost table does itemise.
+
+That one is not a tripwire, it is simply absent. See
+[The client node group](node-group.md).
+
 ## What neither of them does
 
 **Neither stops anything.** No Lambda reaps a tagged resource; no budget
