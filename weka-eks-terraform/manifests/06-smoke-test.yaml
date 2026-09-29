@@ -6,7 +6,15 @@
 #
 #   PVC Bound        -> the CSI controller reached the WEKA API on 14000 and
 #                       created a directory with a quota. Validates
-#                       04-csi-api-secret.yaml and 05-storageclass-dir.yaml.
+#                       04-csi-api-secret.yaml and 05-storageclass-dir.yaml
+#                       -- AND that a WEKA client is running on the
+#                       controller's node. That last part is not obvious:
+#                       measured on 5.1.32.19, this PVC sat Pending for ~9
+#                       minutes with the controller logging
+#                       "No frontends found in driver interface, client
+#                       software may not be running", and bound the moment
+#                       the client pods reached Running. A Pending PVC before
+#                       the clients are up is expected, not a mistake.
 #   Pod Running      -> the CSI node plugin mounted it through the WEKA client
 #                       on that node. Validates 01, 02, the node user data,
 #                       and the security group.

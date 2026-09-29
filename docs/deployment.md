@@ -191,6 +191,17 @@ weka cluster join-token generate --access-token-timeout 52w
 > has to come from your workstation. Prefer an interactive `weka user login`
 > over scripting the password through `aws ssm send-command`, which records
 > command parameters in SSM history.
+>
+> **And it cannot read the deployment password either.** That is the obvious
+> next idea — have the backend fetch `weka-deployment-password` itself, since
+> the module's own automation uses it — and it was tested on 5.1.32.19:
+> `AccessDenied` for both secrets. There is no scripted route that keeps the
+> credential out of SSM history, so either accept that exposure on a
+> throwaway cluster and rotate afterwards, or log in interactively.
+>
+> Minor, but it costs a confusing minute: `aws lambda invoke ... /dev/stdout`
+> concatenates the invoke metadata onto the payload, so piping it to a JSON
+> parser fails with "Extra data". Write it to a file and read that instead.
 
 > **Getting onto a backend.** The backends have no public IPs, so `allow_ssh_cidrs`
 > alone will not reach them — you need a bastion, or SSM. The WEKA module already

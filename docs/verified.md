@@ -20,7 +20,7 @@ assumed.
 | Check | Observed (5.1.32.19) |
 |---|---|
 | WEKA cluster | `WekaIO v5.1.32.19` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (fully protected)` · hot spare 7.36 TiB · 36.82 TiB |
-| Clients joined | **3 connected** (was 1 — this run used `client_node_count = 3`) |
+| Clients joined | 3 client pods `Running`/`Ready` on 3 distinct nodes, and all three served `wekafs` mounts — the RWX test wrote through `/data` from a pod on each node, which a client that had not joined could not do. **The cluster-side `clients: N connected` figure was not re-read after the clients came up**, so it is not quoted here. The only `weka status` capture from this run predates the client pods and says `clients: 0 connected` |
 | AZ placement | all 6 backends **and** all 3 clients in `eu-west-1a`; no cross-AZ storage path |
 | HugePages | node `hugepages-2Mi` allocatable `7Gi` on all three nodes |
 | CPU pinning | node `cpu` allocatable **30 of 32** on all three — `strict-cpu-reservation` doing its job |
