@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # CI -- the gates this repo already documents, actually enforced
 # ---------------------------------------------------------------------------
-# Every check here was previously a convention: a line in the README asking the
+# Every check here was previously a convention: a line in the docs asking the
 # reader to run something before committing. Conventions hold right up until
 # the day they don't, and two real bugs reached main that way -- the printed
 # runbook silently omitting 02-weka-nics-policy.yaml, and the RWX payoff
@@ -72,7 +72,7 @@ jobs:
       # next_steps is an output, so `terraform console` cannot reach it and
       # `terraform output` would need state. The script lifts the heredoc into
       # a scratch module and renders it there. See ci/check-runbook.sh.
-      - name: Runbook matches the README
+      - name: Runbook matches the docs
         working-directory: ${{ github.workspace }}
         run: ./ci/check-runbook.sh
 
@@ -123,6 +123,19 @@ jobs:
             esac
           done < <(git ls-files -s)
           exit "$rc"
+
+  docs:
+    name: Docs (links, orphan pages)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The README is a summary with ten pages behind it, so every cross-page
+      # link is a relative path plus an anchor derived from a heading. Renaming
+      # a heading breaks every link to it, silently -- a broken markdown link
+      # renders as a link and only 404s when somebody clicks it.
+      - name: Links resolve and no page is orphaned
+        run: ./ci/check-docs.sh
 
   manifests:
     name: Manifests (kubeconform, drift, leaks)

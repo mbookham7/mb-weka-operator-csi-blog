@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Cost controls: a TTL tag and a budget alarm
 # ---------------------------------------------------------------------------
-# The README's loudest warning is that this deployment runs at roughly $20-25
+# The loudest warning in the docs is that this deployment runs at roughly $20-25
 # an hour, comfortably over $500 a day. Until this file existed, the only
 # thing enforcing that warning was the reader's attention span -- and the
 # failure mode it guards against is precisely inattention: you meant to run
@@ -22,8 +22,8 @@
 #                   you about. It catches "left it up overnight", which is the
 #                   realistic failure, not "typo'd the instance count".
 #
-# The only real-time control is still `terraform destroy`. See the README
-# teardown section.
+# The only real-time control is still `terraform destroy`. See
+# docs/deployment.md, teardown, and docs/cost-controls.md.
 
 # ---------------------------------------------------------------------------
 # When was this deployment created?
@@ -72,7 +72,7 @@ locals {
 # Created ONLY if you give it somewhere to send the alert. A budget with no
 # subscribers is legal, appears in the console, and notifies nobody -- which
 # is worse than no budget, because it looks like protection. So: no emails,
-# no budget, and the README says so.
+# no budget, and docs/cost-controls.md says so.
 #
 # DAILY rather than MONTHLY on purpose. The risk here is not "this project
 # overspends its monthly allocation", it is "this was left running". A daily

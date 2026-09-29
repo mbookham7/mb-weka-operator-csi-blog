@@ -10,7 +10,7 @@
 #   terraform-aws-modules/vpc 6.x       requires aws >= 6.28
 #
 # terraform-aws-modules/eks 20.x pins `aws >= 5.95, < 6.0.0`, which is flatly
-# incompatible with the WEKA module. See README, "Module versions", for why
+# incompatible with the WEKA module. See docs/versions.md for why
 # this repo runs eks 21.x / vpc 6.x rather than the 20.x / 5.x generation.
 terraform {
   required_version = ">= 1.5.7"

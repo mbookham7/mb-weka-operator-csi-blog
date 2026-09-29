@@ -324,7 +324,7 @@ done
 # The ONLY check here that is against the live cluster rather than against
 # Terraform, because the live node count is what actually decides it -- and
 # because the two disagree by default: client_node_count is 3 in variables.tf
-# but terraform.tfvars.example sets 1, and the deployment in the README was
+# but terraform.tfvars.example sets 1, and the deployment in docs/verified.md was
 # verified with 1.
 #
 # podAntiAffinity on kubernetes.io/hostname is `required`, so surplus replicas

@@ -48,7 +48,7 @@ locals {
   # Linux enumerates vCPUs on AWS with the physical cores first and their
   # siblings second, so the sibling of CPU 0 is at index `default_cores`.
   # On m6i.8xlarge that is 16, which matches the value observed on a running
-  # node in the README:
+  # node, recorded in docs/verified.md:
   #
   #   /sys/devices/system/cpu/cpu0/topology/thread_siblings_list = 0,16
   #

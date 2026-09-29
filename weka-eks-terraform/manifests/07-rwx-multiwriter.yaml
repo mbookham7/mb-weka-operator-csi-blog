@@ -35,7 +35,7 @@
 #
 # `client_node_count` defaults to 3 in variables.tf, but
 # terraform.tfvars.example sets it to 1 to keep the demo cheap -- and the
-# verified deployment in the README ran with 1. With fewer than 3 nodes the
+# verified deployment in docs/verified.md ran with 1. With fewer than 3 nodes the
 # anti-affinity below cannot be satisfied and the surplus replicas sit in
 # Pending with:
 #

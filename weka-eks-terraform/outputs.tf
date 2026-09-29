@@ -83,12 +83,13 @@ output "manifest_values" {
   }
 }
 
-# THIS OUTPUT MIRRORS README STEP 6 ("Apply the manifests, in order"). THE TWO
+# THIS OUTPUT MIRRORS docs/deployment.md ("Apply the manifests, in order").
+# THE TWO
 # MUST BE CHANGED TOGETHER.
 #
 # They drifted once already and it was worse than having no runbook at all:
 # this output omitted 02-weka-nics-policy.yaml, so anyone who followed what
-# Terraform printed -- rather than the README -- walked straight into
+# Terraform printed -- rather than the docs -- walked straight into
 # `1 Insufficient weka.io/weka-nics` on a healthy cluster and a healthy node.
 # A printed runbook is trusted precisely because it came out of the thing that
 # built the infrastructure, which is what makes a wrong one expensive.
@@ -96,7 +97,7 @@ output "manifest_values" {
 # If you add, remove or reorder a manifest, edit both places in the same
 # commit.
 output "next_steps" {
-  description = "Ordered follow-up commands, mirroring README step 6. `terraform output -raw next_steps` to read it without escaping."
+  description = "Ordered follow-up commands, mirroring docs/deployment.md. `terraform output -raw next_steps` to read it without escaping."
   value       = <<-EOT
 
     ============================================================================
@@ -224,7 +225,7 @@ output "next_steps" {
      not so it cleans itself up.
 
      Destroy this when you are done, and then check the console -- see the
-     README teardown section.
+     docs/deployment.md teardown section.
     ============================================================================
 
   EOT

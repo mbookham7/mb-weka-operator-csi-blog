@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 #
-# Does the runbook Terraform PRINTS still match the runbook the README
-# documents?
+# Does the runbook Terraform PRINTS still match the runbook the docs describe?
 #
 # WHY THIS EXISTS
 #
@@ -11,7 +10,7 @@
 # twice:
 #
 #   1. It omitted 02-weka-nics-policy.yaml, so anyone following the printed
-#      output rather than the README walked into
+#      output rather than the docs walked into
 #      "1 Insufficient weka.io/weka-nics" against a healthy cluster and a
 #      healthy node -- the exact failure demo.sh beat 2 exists to teach.
 #
@@ -38,12 +37,16 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUTS="$REPO/weka-eks-terraform/outputs.tf"
-README="$REPO/README.md"
+
+# Every markdown file, not one named page. The payoff command lived in
+# README.md until the docs were split into docs/, and hard-coding a path just
+# means this check silently stops covering it the next time something moves.
+# Scanning them all also catches the copy drifting in ONE page while the
+# others stay correct.
+DOCS="$REPO/README.md $(find "$REPO/docs" -maxdepth 1 -name '*.md' -print 2>/dev/null | sort | tr '\n' ' ')"
 
 command -v terraform >/dev/null || { echo "terraform not found" >&2; exit 1; }
-for f in "$OUTPUTS" "$README"; do
-  [ -f "$f" ] || { echo "missing: $f" >&2; exit 1; }
-done
+[ -f "$OUTPUTS" ] || { echo "missing: $OUTPUTS" >&2; exit 1; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -94,9 +97,10 @@ echo 'local.rendered' | terraform -chdir="$tmp" console > "$tmp/raw" 2>&1
 
 # terraform console prints a multi-line string wrapped in <<EOT / EOT, so what
 # sits between them is the rendered value verbatim -- no unescaping needed.
-python3 - "$tmp/raw" "$README" <<'PY'
+# shellcheck disable=SC2086  # DOCS is a deliberate space-separated list
+python3 - "$tmp/raw" $DOCS <<'PY'
 import re, sys
-raw_path, readme_path = sys.argv[1], sys.argv[2]
+raw_path, doc_paths = sys.argv[1], sys.argv[2:]
 lines = open(raw_path).read().split('\n')
 if not lines or lines[0].strip() != '<<EOT':
     sys.exit("terraform console did not return a heredoc:\n" + '\n'.join(lines[:10]))
@@ -131,7 +135,8 @@ if './check-manifests.sh' in text:
 else:
     bad("runbook does not mention ./check-manifests.sh")
 
-# 3. The RWX payoff command matches the README byte for byte. This is the
+# 3. The RWX payoff command matches every doc that carries it, byte for
+#    byte. This is the
 #    check that catches the $2-vs-\$2 class of bug.
 def payoff(s):
     return [l.strip() for l in s.splitlines()
@@ -139,18 +144,26 @@ def payoff(s):
             or 'shared.log | sort | uniq -c' in l]
 
 rendered_cmd = payoff(text)
-readme_cmd = payoff(open(readme_path).read())
+
+# Every doc that carries the command must carry the SAME command.
+doc_copies = {p: payoff(open(p).read()) for p in doc_paths}
+doc_copies = {p: c for p, c in doc_copies.items() if c}
 
 if not rendered_cmd:
     bad("the RWX payoff command is missing from the runbook")
-elif not readme_cmd:
-    bad("the RWX payoff command is missing from the README")
-elif rendered_cmd == readme_cmd:
-    ok("RWX payoff command matches the README byte for byte")
+elif not doc_copies:
+    bad("the RWX payoff command appears in no documentation page")
 else:
-    bad("RWX payoff command differs between the runbook and the README")
-    print(f"        runbook: {rendered_cmd}")
-    print(f"        README : {readme_cmd}")
+    import os
+    mismatched = {p: c for p, c in doc_copies.items() if c != rendered_cmd}
+    if mismatched:
+        bad("RWX payoff command differs between the runbook and the docs")
+        print(f"        runbook: {rendered_cmd}")
+        for p, c in mismatched.items():
+            print(f"        {os.path.relpath(p):<24} {c}")
+    else:
+        where = ", ".join(os.path.relpath(p) for p in sorted(doc_copies))
+        ok(f"RWX payoff command matches the docs byte for byte ({where})")
 
 # 4. The awk field reference must survive the shell it gets pasted into.
 #    Unescaped, bash expands $2 to empty and awk silently prints whole lines.
@@ -164,7 +177,7 @@ elif awk_lines:
 print()
 if fails:
     print(f"RUNBOOK CHECK FAILED ({len(fails)} problem(s)).")
-    print("outputs.tf mirrors README step 6 -- fix both together.")
+    print("outputs.tf mirrors docs/deployment.md -- fix both together.")
     sys.exit(1)
-print("Runbook check passed -- what Terraform prints matches what the README documents.")
+print("Runbook check passed -- what Terraform prints matches what the docs document.")
 PY

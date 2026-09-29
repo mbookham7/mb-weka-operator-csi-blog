@@ -13,7 +13,7 @@
 # Unverified benchmark numbers are the single easiest way to turn a good
 # technical post into a correction. This repo ships the manifest so that
 # readers can run it on THEIR cluster and see THEIR numbers; the blog post
-# quotes none of its output, and neither does the README.
+# quotes none of its output, and neither do the docs.
 #
 # So: no example output, no expected throughput, no "you should see roughly"
 # in this file. If you are tempted to add one, that is the thing the Fact Note

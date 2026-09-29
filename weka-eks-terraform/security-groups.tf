@@ -10,8 +10,8 @@
 # Why security groups and not NetworkPolicy: the WekaClient container runs with
 # hostNetwork: true. Its traffic never traverses the CNI's pod network, so
 # Kubernetes NetworkPolicy has no visibility into it and cannot allow or deny
-# any of it. Security groups are the only enforcement point. See README,
-# "Networking notes".
+# any of it. Security groups are the only enforcement point. See
+# docs/networking.md.
 
 resource "aws_security_group" "weka" {
   name_prefix = "${local.name}-weka-"

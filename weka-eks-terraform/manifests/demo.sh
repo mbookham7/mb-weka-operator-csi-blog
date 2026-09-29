@@ -53,7 +53,7 @@ PAUSE=1
 RESET_ONLY=0
 
 # Beat 2 waits on an ENI attach, a driver load and a multi-GiB image pull, so
-# it is the slow one by a wide margin. The README measures the pull in
+# it is the slow one by a wide margin. docs/verified.md measures the pull in
 # minutes on a cold node over a single NAT gateway.
 CLIENT_TIMEOUT="${CLIENT_TIMEOUT:-900}"
 PENDING_TIMEOUT="${PENDING_TIMEOUT:-180}"
@@ -149,7 +149,7 @@ after an interrupted run."
   # ---------------------------------------------------------------------
   # The part that decides whether beat 2 can actually be rehearsed
   # ---------------------------------------------------------------------
-  # Deleting the WekaPolicy does NOT detach the data-path ENIs -- the README
+  # Deleting the WekaPolicy does NOT detach the data-path ENIs -- the docs
   # teardown section records that they are released only when the node
   # terminates. If the node is still advertising weka.io/weka-nics after the
   # policy is gone, the WekaClient in beat 2 will schedule IMMEDIATELY and

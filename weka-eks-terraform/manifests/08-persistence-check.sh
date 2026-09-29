@@ -150,7 +150,7 @@ ok "kubectl reachable" "$(kubectl config current-context)"
 pvc_phase=$(kubectl get pvc "$PVC" -o jsonpath='{.status.phase}' 2>/dev/null || true)
 [ -n "$pvc_phase" ] || fail "PVC $PVC not found" "apply 07-rwx-multiwriter.yaml first"
 [ "$pvc_phase" = "Bound" ] || fail "PVC $PVC is $pvc_phase, not Bound" \
-  "see the PVC Pending rows in the README troubleshooting table"
+  "see the PVC Pending rows in docs/troubleshooting.md"
 ok "PVC $PVC" "$pvc_phase"
 
 # At least two SCHEDULABLE client nodes, or the whole premise collapses: cordon
@@ -232,7 +232,7 @@ if [ "$phase" != "Succeeded" ]; then
   fi
   kubectl describe pod "$POD" 2>/dev/null | sed -n '/^Events:/,$p' | sed 's/^/      /' >&2 || true
   fail "reader pod ended in phase '$phase' on $read_node" \
-    "if this is MountVolume.SetUp ... DeadlineExceeded, read the poached-ENI row in the README"
+    "if this is MountVolume.SetUp ... DeadlineExceeded, read the poached-ENI row in docs/troubleshooting.md"
 fi
 
 [ -n "$read_node" ] || fail "reader pod never recorded a nodeName"
