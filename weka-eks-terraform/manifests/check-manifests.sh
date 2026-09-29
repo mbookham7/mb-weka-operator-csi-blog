@@ -16,29 +16,92 @@
 # Every one of those reads like a capacity problem rather than a mismatch, and
 # each costs 10-20 minutes to discover the slow way. This costs two seconds.
 #
-# Usage, from this directory (needs the Terraform state to be present):
-#     ./check-manifests.sh
+# Usage, from this directory:
+#
+#     ./check-manifests.sh              needs Terraform state and, ideally, a cluster
+#     ./check-manifests.sh --offline    files only -- no Terraform, no kubectl
+#
+# THE TWO MODES ASK DIFFERENT QUESTIONS, and --offline is not merely a subset.
+#
+#   default    "is MY WORKING COPY ready to apply?"  Compares the manifests
+#              against `terraform output manifest_values`, checks the cluster
+#              prerequisites, and insists the placeholders are filled in.
+#
+#   --offline  "is THE REPO internally consistent as committed?"  Runs every
+#              check that needs only the files, and then inverts the two
+#              placeholder checks, because in a clean checkout the placeholders
+#              are the CORRECT state:
+#
+#                03-weka-client.yaml MUST still say REPLACE -- real backend IPs
+#                in git are live infrastructure detail the next reader inherits
+#                and cannot use.
+#
+#                01-weka-client-secret.yaml and 04-csi-api-secret.yaml MUST NOT
+#                EXIST -- they are gitignored, and a checkout that has them is a
+#                checkout where somebody committed a WEKA admin password.
+#
+#              That makes --offline a credential-leak check as well as a
+#              consistency check, which is why CI runs it on every push.
 #
 set -uo pipefail
+
+OFFLINE=0
+case "${1:-}" in
+  --offline) OFFLINE=1 ;;
+  "") ;;
+  -h|--help) sed -n '2,/^set -uo/p' "$0" | sed 's/^#\{1,\} \{0,1\}//; s/^#$//' | sed '$d'; exit 0 ;;
+  *) echo "unknown argument: $1 (try --help)" >&2; exit 2 ;;
+esac
 
 TFDIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$(dirname "$0")" || exit 1
 
-# `terraform output` needs the input variables to be resolvable.
-# shellcheck source=/dev/null  # .env is gitignored and per-developer
-[ -f "$TFDIR/../.env" ] && { set -a; . "$TFDIR/../.env"; set +a; }
+vals=""
+if [ "$OFFLINE" -eq 0 ]; then
+  # `terraform output` needs the input variables to be resolvable.
+  # shellcheck source=/dev/null  # .env is gitignored and per-developer
+  [ -f "$TFDIR/../.env" ] && { set -a; . "$TFDIR/../.env"; set +a; }
 
-echo "Reading authoritative values from terraform output manifest_values..."
-vals=$(cd "$TFDIR" && terraform output -json manifest_values 2>/dev/null)
-if [ -z "$vals" ] || [ "$vals" = "null" ]; then
-  echo "ERROR: could not read 'terraform output -json manifest_values'." >&2
-  echo "       Run this after 'terraform apply', from a shell that can read the state." >&2
-  exit 2
+  echo "Reading authoritative values from terraform output manifest_values..."
+  vals=$(cd "$TFDIR" && terraform output -json manifest_values 2>/dev/null)
+  if [ -z "$vals" ] || [ "$vals" = "null" ]; then
+    echo "ERROR: could not read 'terraform output -json manifest_values'." >&2
+    echo "       Run this after 'terraform apply', from a shell that can read the state." >&2
+    echo "       For the file-only checks that need neither Terraform nor a cluster:" >&2
+    echo "           ./check-manifests.sh --offline" >&2
+    exit 2
+  fi
+else
+  echo "OFFLINE MODE -- files only. Skipping Terraform state and cluster checks."
 fi
 
 get() { printf '%s' "$vals" | python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$1"; }
 
 fail=0
+
+# --- what does the REPOSITORY say, as opposed to the working tree? -------
+#
+# Offline mode asks "is the repo internally consistent as committed?", so it
+# has to read git rather than the filesystem. Locally these differ in exactly
+# the ways that matter: 01/04 exist on disk (correctly, gitignored) and
+# 03-weka-client.yaml has your real backend IPs in it (correctly, you edited
+# it in place). Neither is committed, and a filesystem check would report both
+# as failures on a perfectly clean repo.
+#
+# Outside a git checkout -- an exported tarball, say -- the filesystem IS the
+# committed state, so fall back to it.
+in_git() { git -C . rev-parse --is-inside-work-tree >/dev/null 2>&1; }
+
+is_tracked() { # is_tracked <path>
+  if in_git; then git ls-files --error-unmatch "$1" >/dev/null 2>&1
+  else [ -f "$1" ]; fi
+}
+
+committed_content() { # committed_content <path> -- empty if untracked
+  if in_git; then git show "HEAD:./$1" 2>/dev/null
+  else cat "$1" 2>/dev/null; fi
+}
+
 check() { # check <label> <expected> <actual>
   if [ "$2" = "$3" ]; then
     printf '  OK    %-44s %s\n' "$1" "$3"
@@ -117,7 +180,9 @@ to_bytes() { # to_bytes <quantity>   e.g. 10Gi, 512m, 1024
 # it look like something subtler is wrong.
 echo
 echo "Cluster prerequisites:"
-if kubectl version --request-timeout=8s >/dev/null 2>&1; then
+if [ "$OFFLINE" -eq 1 ]; then
+  printf '  SKIP  %-44s offline mode\n' "cluster checks"
+elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
   printf '  OK    %-44s %s\n' "kubectl reachable" "$(kubectl config current-context 2>/dev/null)"
   if kubectl get namespace weka-operator-system >/dev/null 2>&1; then
     printf '  OK    %-44s exists\n' "namespace weka-operator-system"
@@ -136,12 +201,16 @@ else
 fi
 
 echo
+if [ "$OFFLINE" -eq 1 ]; then
+  echo "Comparing manifests against Terraform: SKIPPED (offline)"
+else
 echo "Comparing manifests against Terraform:"
 check "03 spec.coresNum"              "$(get '03-weka-client.yaml : spec.coresNum')"        "$(y 03-weka-client.yaml 'spec.coresNum')"
 check "03 spec.image"                 "$(get '03-weka-client.yaml : spec.image')"           "$(y 03-weka-client.yaml 'spec.image')"
 check "02 dataNICsNumber"             "$(get '02-weka-nics-policy.yaml : dataNICsNumber')"  "$(y 02-weka-nics-policy.yaml 'spec.payload.ensureNICsPayload.dataNICsNumber')"
 check "02 spec.image"                 "$(get '02-weka-nics-policy.yaml : spec.image')"      "$(y 02-weka-nics-policy.yaml 'spec.image')"
 check "05 filesystemName"             "$(get '05-storageclass-dir.yaml : filesystemName')"  "$(y 05-storageclass-dir.yaml 'parameters.filesystemName')"
+fi
 
 # --- dataNICsNumber must be >= coresNum, not merely equal -----------------
 cn=$(y 03-weka-client.yaml 'spec.coresNum'); dn=$(y 02-weka-nics-policy.yaml 'spec.payload.ensureNICsPayload.dataNICsNumber')
@@ -179,8 +248,20 @@ check "09 claimName -> 07 PVC" "$pvc_name" \
 # A sweep rather than a per-file path, so a tag added to a NEW manifest is
 # covered without anyone remembering to extend this script. The per-file checks
 # above still run, because they name the field and give a better message.
-want_image=$(get '03-weka-client.yaml : spec.image')
-if [ -n "$want_image" ]; then
+want_image=""
+[ "$OFFLINE" -eq 0 ] && want_image=$(get '03-weka-client.yaml : spec.image')
+if [ "$OFFLINE" -eq 1 ]; then
+  # Terraform is the authority on the tag, so offline cannot say whether the
+  # tag is RIGHT -- only that every manifest agrees with every other. A
+  # disagreement is a bug either way, and it is the half CI can prove.
+  swept=$(grep -hoE 'quay\.io/weka\.io/weka-in-container:[A-Za-z0-9._-]+' ./*.yaml 2>/dev/null | sort -u)
+  n=$(printf '%s\n' "$swept" | sed '/^$/d' | wc -l | tr -d ' ')
+  if [ "$n" = "1" ]; then
+    printf '  OK    %-44s %s\n' "weka image tags agree across manifests" "$swept"
+  else
+    printf '  DRIFT %-44s %s\n' "weka image tags disagree" "$(printf '%s' "$swept" | tr '\n' ' ')"; fail=1
+  fi
+elif [ -n "$want_image" ]; then
   found_images=$(grep -hoE 'quay\.io/weka\.io/weka-in-container:[A-Za-z0-9._-]+' ./*.yaml 2>/dev/null | sort -u)
   bad=0
   for img in $found_images; do
@@ -251,7 +332,9 @@ done
 # anti-affinity rules", which reads like a scheduling bug rather than a node
 # count.
 replicas=$(ym 07-rwx-multiwriter.yaml Deployment 'spec.replicas')
-if kubectl version --request-timeout=8s >/dev/null 2>&1; then
+if [ "$OFFLINE" -eq 1 ]; then
+  printf '  SKIP  %-44s offline mode (needs a cluster)\n' "07/08 node-count checks"
+elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
   # shellcheck disable=SC2046  # node names never contain whitespace
   set -- $(kubectl get nodes -l weka.io/supports-clients=true \
              -o jsonpath='{range .items[?(@.spec.unschedulable!=true)]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
@@ -280,7 +363,23 @@ fi
 #   forgot to edit  -> the client cannot reach any backend and never joins
 #   committed real IPs -> live infrastructure detail in git, and the next
 #                         reader inherits addresses that do not exist
-if grep -q 'REPLACE' 03-weka-client.yaml; then
+#
+# OFFLINE INVERTS THIS. In a clean checkout the placeholders are the correct
+# state and their ABSENCE is the bug: it means someone committed live backend
+# IPs. Those are not secret, but they are infrastructure detail that stops
+# being true the moment the ASG heals a node, and the next reader inherits
+# addresses that route nowhere.
+if [ "$OFFLINE" -eq 1 ]; then
+  # The COMMITTED blob, not your working copy -- editing it locally is the
+  # documented workflow, committing the result is the mistake.
+  if committed_content 03-weka-client.yaml | grep -q 'REPLACE'; then
+    printf '  OK    %-44s committed copy still has placeholders\n' "03-weka-client.yaml"
+  else
+    printf '  FAIL  %-44s committed copy has NO placeholders -- real backend IPs in git?\n' "03-weka-client.yaml"
+    printf '        %s\n' "edit joinIpPorts locally; do not commit the edit"
+    fail=1
+  fi
+elif grep -q 'REPLACE' 03-weka-client.yaml; then
   printf '  TODO  %-44s joinIpPorts still placeholders -- set real backend IPs\n' "03-weka-client.yaml"
   fail=1
 else
@@ -297,8 +396,24 @@ fi
 # the .example templates. Symptom of getting this wrong: the WekaClient fails
 # to join with an authentication error, and the CSI plugin times out against
 # backend IPs that no longer exist.
+#
+# OFFLINE INVERTS THIS TOO, and this is the one that matters most. Both files
+# are gitignored. A CI checkout that CONTAINS one is a checkout where somebody
+# force-added a file holding the WEKA admin password, the join token and the
+# CSI API credentials -- in a public repo. Fail loudly and early.
 for f in 01-weka-client-secret.yaml 04-csi-api-secret.yaml; do
-  if [ -f "$f" ]; then
+  if [ "$OFFLINE" -eq 1 ]; then
+    # TRACKED, not merely present. Having these on disk is normal and correct;
+    # having them in git means a WEKA admin password is in a public repo.
+    if is_tracked "$f"; then
+      printf '  FAIL  %-44s TRACKED IN GIT -- credentials committed\n' "$f"
+      printf '        %s\n' "this file is gitignored, so it took a force-add. Rotate the WEKA admin"
+      printf '        %s\n' "password and the join token, then purge it from history."
+      fail=1
+    else
+      printf '  OK    %-44s untracked, as it should be\n' "$f"
+    fi
+  elif [ -f "$f" ]; then
     if grep -qE 'UkVQTEFDRV9XSVRI|UkVQTEFDRV9NRQ==' "$f"; then
       printf '  DRIFT %-44s still contains REPLACE_ME placeholders\n' "$f"; fail=1
     else
@@ -311,11 +426,25 @@ done
 
 echo
 if [ "$fail" -eq 0 ]; then
-  echo "All checks passed -- prerequisites present and manifests agree with Terraform."
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "All offline checks passed -- the repo is internally consistent and no"
+    echo "credentials or live backend IPs are committed. Run without --offline"
+    echo "against a real deployment to also check the manifests against Terraform."
+  else
+    echo "All checks passed -- prerequisites present and manifests agree with Terraform."
+  fi
 else
-  echo "CHECKS FAILED. Fix these before applying, or you will spend the next"
-  echo "20 minutes debugging a Pending pod instead:"
-  echo "  - MISSING prerequisite -> run ./00-namespace-and-secrets.sh first"
-  echo "  - DRIFT on a value     -> 'terraform output manifest_values' is authoritative"
+  if [ "$OFFLINE" -eq 1 ]; then
+    echo "CHECKS FAILED. The repository is not internally consistent:"
+    echo "  - DRIFT on a value -> two files that must agree do not"
+    echo "  - FAIL on 03       -> real backend IPs look committed; restore the placeholders"
+    echo "  - FAIL on 01 / 04  -> a gitignored credential file is in the checkout. Rotate"
+    echo "                        the WEKA admin password and join token, then purge it."
+  else
+    echo "CHECKS FAILED. Fix these before applying, or you will spend the next"
+    echo "20 minutes debugging a Pending pod instead:"
+    echo "  - MISSING prerequisite -> run ./00-namespace-and-secrets.sh first"
+    echo "  - DRIFT on a value     -> 'terraform output manifest_values' is authoritative"
+  fi
 fi
 exit "$fail"

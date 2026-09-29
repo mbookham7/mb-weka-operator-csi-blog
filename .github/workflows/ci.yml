@@ -1,0 +1,156 @@
+# ---------------------------------------------------------------------------
+# CI -- the gates this repo already documents, actually enforced
+# ---------------------------------------------------------------------------
+# Every check here was previously a convention: a line in the README asking the
+# reader to run something before committing. Conventions hold right up until
+# the day they don't, and two real bugs reached main that way -- the printed
+# runbook silently omitting 02-weka-nics-policy.yaml, and the RWX payoff
+# command rendering an unescaped `$2` that bash expands to nothing, turning a
+# correct-looking command into a wrong answer.
+#
+# NO AWS CREDENTIALS ARE NEEDED OR WANTED. Nothing here plans, applies, or
+# touches an account -- `terraform init -backend=false` plus `validate` is a
+# configuration check, not a dry run. Keep it that way: this repo stands up
+# ~$20/hour of infrastructure, and CI should never be one misconfigured
+# workflow away from doing that.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Read-only. This workflow publishes nothing and needs nothing else.
+permissions:
+  contents: read
+
+# A second push to the same branch supersedes the first.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned to the repo's DECLARED FLOOR (versions.tf: required_version
+  # >= 1.5.7) rather than to "latest", so CI proves the floor is real. If this
+  # is bumped, the floor in versions.tf should move with it -- otherwise the
+  # repo claims support for a version nothing ever exercises.
+  TERRAFORM_VERSION: "1.5.7"
+  KUBECONFORM_VERSION: "v0.6.7"
+  # The EKS control plane version in variables.tf. Manifests are validated
+  # against this API surface.
+  K8S_VERSION: "1.32.0"
+
+jobs:
+  terraform:
+    name: Terraform (fmt, validate, runbook)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: weka-eks-terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff .
+
+      # -backend=false: no state, no credentials. This resolves the module
+      # tree and the providers from the committed .terraform.lock.hcl, which
+      # also means a lock file missing linux_amd64 checksums fails here rather
+      # than on a colleague's machine.
+      - name: terraform init
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        run: terraform validate
+
+      # next_steps is an output, so `terraform console` cannot reach it and
+      # `terraform output` would need state. The script lifts the heredoc into
+      # a scratch module and renders it there. See ci/check-runbook.sh.
+      - name: Runbook matches the README
+        working-directory: ${{ github.workspace }}
+        run: ./ci/check-runbook.sh
+
+  shell:
+    name: Shell (shellcheck, bash -n)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Braces matter: `A || B && C` parses as `(A || B) && C`, which would
+      # run the install even when shellcheck is already on the runner.
+      - name: Install shellcheck if the runner lacks it
+        run: |
+          command -v shellcheck >/dev/null || {
+            sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          }
+
+      - name: shellcheck and bash -n
+        run: |
+          set -euo pipefail
+          # Every tracked shell script, wherever it lives -- so a new one added
+          # outside manifests/ is covered without editing this workflow.
+          #
+          # `set --` rather than `mapfile`, which is bash 4+. The runner has
+          # bash 5, but this repo is developed on macOS where /bin/bash is 3.2,
+          # and a CI snippet nobody can run locally is one nobody will fix.
+          # 08-persistence-check.sh made the same call for the same reason.
+          # shellcheck disable=SC2046  # deliberate splitting; no path has spaces
+          set -- $(git ls-files '*.sh')
+          [ "$#" -gt 0 ] || { echo "no shell scripts found -- glob is wrong"; exit 1; }
+          printf 'checking %d script(s):\n' "$#"
+          printf '  %s\n' "$@"
+          for s in "$@"; do bash -n "$s"; done
+          shellcheck "$@"
+
+      # demo.sh runs 08-persistence-check.sh directly. A script that loses its
+      # executable bit fails mid-demo, at beat 5, after everything expensive is
+      # already up.
+      - name: Scripts are executable
+        run: |
+          set -euo pipefail
+          rc=0
+          while read -r mode _ _ path; do
+            case "$path" in
+              *.sh)
+                if [ "$mode" = "100755" ]; then echo "  OK   $path"
+                else echo "  FAIL $path is mode $mode, expected 100755 -- git update-index --chmod=+x $path"; rc=1; fi ;;
+            esac
+          done < <(git ls-files -s)
+          exit "$rc"
+
+  manifests:
+    name: Manifests (kubeconform, drift, leaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install kubeconform ${{ env.KUBECONFORM_VERSION }}
+        run: |
+          set -euo pipefail
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # -ignore-missing-schemas because WekaClient and WekaPolicy are CRDs
+      # whose schemas only exist once the operator chart is installed. Every
+      # built-in kind is still validated strictly, which is what catches a
+      # typo'd field name that `kubectl apply --dry-run=client` would only find
+      # against a live cluster.
+      - name: kubeconform
+        working-directory: weka-eks-terraform/manifests
+        run: kubeconform -kubernetes-version "$K8S_VERSION" -strict -summary -verbose -ignore-missing-schemas ./*.yaml ./*.yaml.example
+
+      # --offline asks a different question from the default mode: not "is my
+      # working copy ready to apply" but "is the repo internally consistent as
+      # committed" -- which includes asserting that 03's placeholder IPs are
+      # intact and that neither credential file is tracked. See the header of
+      # the script.
+      - name: Manifest consistency and credential-leak check
+        working-directory: weka-eks-terraform/manifests
+        run: ./check-manifests.sh --offline
