@@ -75,16 +75,38 @@ the value once into state and holds it.
 the console. It notifies nobody. That is worse than having none, because it
 looks like a control — so the resource is not created at all unless you give
 it somewhere to send the alert. Each address also gets an AWS confirmation
-subscriber carries **no confirmation state at all**. Verified against the API
-on a live budget: `describe-subscribers-for-notification` returns only
-`Address` and `SubscriptionType`, and `NotificationState: OK` on the
-notification means "threshold not breached", not "subscription healthy".
+subscriber carries **no confirmation state at all**, and there is **no
+confirmation step**.
 
-So there is nothing to check programmatically, and **the first real alert is
-the only proof the thing works.** AWS's subscribe-and-confirm handshake
-applies to SNS-topic subscribers; whether an `EMAIL` subscriber needs any
-action before delivery is untested here. Do not treat this budget as a
-working control until you have seen an email from it.
+Both parts were checked. The API returns only `Address` and
+`SubscriptionType` from `describe-subscribers-for-notification`, and
+`NotificationState: OK` on a notification means "threshold not breached", not
+"subscription healthy". And across two budgets created and destroyed on
+2026-09-29, each with three notifications and an email subscriber, **AWS sent
+no confirmation email at all**. The subscribe-and-confirm handshake people
+expect here is the **SNS** model; an `EMAIL` subscriber has nothing to accept.
+
+So there is nothing to click and nothing to check. Which leaves one thing
+genuinely untested: **whether a threshold breach actually delivers.** Neither
+run crossed one — $600/day against about an hour of spend — so no alert was
+ever due.
+
+If you want to prove delivery before relying on it, the cheap way is to
+create a throwaway budget with a limit low enough that existing account spend
+breaches it immediately, and wait for the next refresh:
+
+```bash
+aws budgets create-budget --account-id <acct> --budget '{
+  "BudgetName":"delivery-test","BudgetType":"COST","TimeUnit":"DAILY",
+  "BudgetLimit":{"Amount":"0.01","Unit":"USD"}}' \
+  --notifications-with-subscribers '[{
+    "Notification":{"NotificationType":"ACTUAL","ComparisonOperator":"GREATER_THAN",
+                    "Threshold":50,"ThresholdType":"PERCENTAGE"},
+    "Subscribers":[{"SubscriptionType":"EMAIL","Address":"you@example.com"}]}]'
+```
+
+Budgets refresh roughly three times a day, so allow up to eight hours. Delete
+it afterwards. Costs nothing.
 
 **Account-wide, not tag-filtered.** A tag-filtered budget *can silently report
 $0*: cost allocation tags must be activated by hand in Billing → Cost

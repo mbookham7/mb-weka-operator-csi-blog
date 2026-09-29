@@ -204,12 +204,16 @@ variable "budget_notification_emails" {
     looks like protection while providing none, so this repo does not create
     one. No addresses, no budget.
 
-    DELIVERY IS UNVERIFIED BY THIS REPO. Checked against a live budget: the
-    API exposes no confirmation state for an EMAIL subscriber --
-    `describe-subscribers-for-notification` returns only Address and
-    SubscriptionType -- so there is nothing to assert programmatically, and
-    the first real alert is the only proof it works. Do not treat the budget
-    as a working control until you have seen one.
+    THERE IS NO CONFIRMATION STEP. Two budgets were created and destroyed on
+    2026-09-29, each with three notifications and an email subscriber, and AWS
+    sent no confirmation email -- the subscribe-and-confirm handshake people
+    expect is the SNS model, not this one. The API exposes no subscription
+    state either: describe-subscribers-for-notification returns only Address
+    and SubscriptionType.
+
+    What remains untested is DELIVERY on a threshold breach, because neither
+    run crossed one. See docs/cost-controls.md for a zero-cost way to prove it
+    with a throwaway $0.01 budget before you rely on this.
 
     Note that AWS Budgets refreshes cost data around three times a day. This
     is a backstop measured in hours, not a circuit breaker -- by the time it

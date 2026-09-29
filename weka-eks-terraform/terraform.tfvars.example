@@ -152,9 +152,9 @@ ttl_hours = 8
 
 # THE BUDGET IS ONLY CREATED IF YOU LIST AN ADDRESS HERE. A budget with no
 # subscribers looks like protection and provides none, so this repo does not
-# create one. NOTE the budget's delivery is unverified by this repo: the API
-# exposes no confirmation state for an EMAIL subscriber, so the first real
-# alert is the only proof it works.
+# create one. There is NO confirmation step -- observed across two budgets,
+# AWS sends no confirmation email for an EMAIL subscriber. Delivery on an
+# actual threshold breach is still untested; see docs/cost-controls.md.
 #
 # budget_notification_emails = ["you@example.com"]
 
