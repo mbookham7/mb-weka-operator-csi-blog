@@ -185,6 +185,7 @@ The manifests, in the order they are applied:
 | `08-persistence-check.sh` | Writes a sentinel, deletes the pod, cordons its node, asserts the pod reschedules elsewhere and reads the sentinel back | demo only |
 | `09-fio-job.yaml` | Short fio profile against `07`'s volume. **Results are not publishable without an approved WEKA Fact Note** — see the header comment | demo only |
 | `10-poddisruptionbudgets.yaml` | Paces node-group rolls so clients are not all evicted at once. **Fill in the selector** — see the header | recommended |
+| `10-discover-pdb-selector.sh` | Derives that selector from a live cluster and, with `--write`, patches it in | helper |
 | `demo.sh` | Drives the five demo beats in order, with pauses, for a recording. `--reset` returns to the pre-demo state | demo only |
 
 ---

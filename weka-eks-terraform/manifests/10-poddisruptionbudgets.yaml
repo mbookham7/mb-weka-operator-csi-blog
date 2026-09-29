@@ -51,7 +51,17 @@
 # stated here in advance -- they vary by operator version. Guessing would ship
 # a PDB that matches nothing, which is worse than shipping none.
 #
-# Find the real labels on a running client pod:
+# THE EASY WAY -- let the script work it out and write it in:
+#
+#     ./10-discover-pdb-selector.sh            # report only
+#     ./10-discover-pdb-selector.sh --write    # patch this file
+#
+# It finds the client pods by their image, then TESTS candidate selectors
+# against the live cluster and keeps only one that selects exactly those pods
+# and nothing else. That middle step is the part that is easy to get wrong by
+# eye -- see "too broad" below.
+#
+# By hand, if you prefer:
 #
 #     kubectl -n weka-operator-system get pods -L app --show-labels
 #

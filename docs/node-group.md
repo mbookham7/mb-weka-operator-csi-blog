@@ -125,7 +125,24 @@ produce a PDB that matches nothing, and **a PDB matching nothing is silently
 inert**: it exists, `kubectl get pdb` shows it, it reports allowed
 disruptions, and it restrains precisely nothing.
 
-Find the real labels on a running cluster:
+Once the operator is running, derive it:
+
+```bash
+cd weka-eks-terraform/manifests
+./10-discover-pdb-selector.sh            # report what it would use
+./10-discover-pdb-selector.sh --write    # and patch the manifest
+```
+
+The script identifies the client pods by their **image** rather than by any
+label — the labels being the unknown — then tests candidate selectors against
+the live cluster and keeps only one that selects *exactly* those pods.
+
+That middle step is the part that is easy to get wrong by hand. Too broad is
+its own failure: a selector that also catches the CSI node plugin or the node
+agent budgets them together and blocks drains for the wrong reason. Too
+narrow matches nothing, which is silently inert.
+
+By hand, if you prefer:
 
 ```bash
 kubectl -n weka-operator-system get pods --show-labels
@@ -133,10 +150,6 @@ kubectl -n weka-operator-system get pods --show-labels
 kubectl -n weka-operator-system get pod <client-pod> \
   -o jsonpath='{.metadata.labels}' | python3 -m json.tool
 ```
-
-Pick one or two labels that match the client pods **and nothing else**. Too
-broad is its own failure: a selector that also catches the CSI node plugin
-budgets them together and blocks drains for the wrong reason.
 
 `./check-manifests.sh` fails while the placeholder is there, and — against a
 live cluster — fails if a selector matches no pods. See

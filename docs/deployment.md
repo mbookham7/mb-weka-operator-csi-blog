@@ -302,8 +302,9 @@ kubectl apply -f 04-csi-api-secret.yaml
 kubectl apply -f 05-storageclass-dir.yaml
 kubectl apply -f 06-smoke-test.yaml
 
-# Recommended: paces future node-group rolls. Edit the selector first --
-# the file ships with a REPLACE_ME placeholder. See its header.
+# Recommended: paces future node-group rolls. Derive the selector from the
+# running operator first -- the file ships with a REPLACE_ME placeholder.
+./10-discover-pdb-selector.sh --write
 kubectl apply -f 10-poddisruptionbudgets.yaml
 ```
 

@@ -347,26 +347,40 @@ fi
 # as joinIpPorts in 03. Offline inverts it, for the same reason: in a clean
 # checkout the placeholder is the correct committed state.
 if [ -f 10-poddisruptionbudgets.yaml ]; then
+  # Inspect the PARSED SELECTOR VALUES, not the file text. The file's own
+  # header explains the REPLACE_ME convention and therefore contains the
+  # word -- a whole-file grep can never pass, however correctly the selector
+  # is filled in. Found the hard way.
+  pdb_tmp="$(mktemp)"
   if [ "$OFFLINE" -eq 1 ]; then
-    # An untracked file has no committed copy, and reading one returns empty
-    # -- which would otherwise look identical to "the placeholder was
-    # removed". Say which it is.
-    if ! is_tracked 10-poddisruptionbudgets.yaml; then
+    committed_content 10-poddisruptionbudgets.yaml > "$pdb_tmp" 2>/dev/null
+  else
+    cat 10-poddisruptionbudgets.yaml > "$pdb_tmp"
+  fi
+  pdb_names=$(ym_list "$pdb_tmp" PodDisruptionBudget)
+  pdb_placeholders=0
+  for pdb in $pdb_names; do
+    case "$(ym_pdb_selector "$pdb_tmp" "$pdb")" in *REPLACE_ME*) pdb_placeholders=1 ;; esac
+  done
+
+  if [ "$OFFLINE" -eq 1 ]; then
+    if [ -z "$pdb_names" ]; then
       printf '  NOTE  %-44s not committed yet -- nothing to check\n' "10-poddisruptionbudgets.yaml"
-    elif committed_content 10-poddisruptionbudgets.yaml | grep -q 'REPLACE_ME'; then
+    elif [ "$pdb_placeholders" -eq 1 ]; then
       printf '  OK    %-44s committed copy still has its placeholder\n' "10-poddisruptionbudgets.yaml"
     else
-      printf '  NOTE  %-44s placeholder filled in the committed copy\n' "10-poddisruptionbudgets.yaml"
-      printf '        %s\n' "harmless if the label is generic, but it is operator-version specific --"
-      printf '        %s\n' "check it is not just your cluster's labels baked into the repo"
+      printf '  NOTE  %-44s selector filled in the committed copy\n' "10-poddisruptionbudgets.yaml"
+      printf '        %s\n' "operator-version specific -- check it is not just one cluster's labels"
+      printf '        %s\n' "baked into the repo. ./10-discover-pdb-selector.sh re-derives it."
     fi
-  elif grep -q 'REPLACE_ME' 10-poddisruptionbudgets.yaml; then
+  elif [ "$pdb_placeholders" -eq 1 ]; then
     printf '  TODO  %-44s selector still REPLACE_ME -- the PDB will match nothing\n' "10-poddisruptionbudgets.yaml"
-    printf '        %s\n' "kubectl -n weka-operator-system get pods --show-labels"
+    printf '        %s\n' "run ./10-discover-pdb-selector.sh --write against a live cluster"
     fail=1
   else
     printf '  OK    %-44s selector filled in\n' "10-poddisruptionbudgets.yaml"
   fi
+  rm -f "$pdb_tmp"
 
   # Against a live cluster, prove each selector actually matches pods.
   if [ "$OFFLINE" -eq 0 ] && kubectl version --request-timeout=8s >/dev/null 2>&1; then
