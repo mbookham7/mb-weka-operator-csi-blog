@@ -204,9 +204,12 @@ variable "budget_notification_emails" {
     looks like protection while providing none, so this repo does not create
     one. No addresses, no budget.
 
-    Each address gets an AWS confirmation email it must accept before any
-    alert is delivered. An unconfirmed subscription is silent, so confirm it
-    before you rely on it.
+    DELIVERY IS UNVERIFIED BY THIS REPO. Checked against a live budget: the
+    API exposes no confirmation state for an EMAIL subscriber --
+    `describe-subscribers-for-notification` returns only Address and
+    SubscriptionType -- so there is nothing to assert programmatically, and
+    the first real alert is the only proof it works. Do not treat the budget
+    as a working control until you have seen one.
 
     Note that AWS Budgets refreshes cost data around three times a day. This
     is a backstop measured in hours, not a circuit breaker -- by the time it

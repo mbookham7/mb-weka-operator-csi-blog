@@ -465,9 +465,11 @@ then have to strip by hand.
 > - **Secrets Manager** — entries are *scheduled* for deletion, not deleted.
 >   They keep the name reserved for up to 30 days, so a re-apply under the
 >   same `prefix`/`cluster_name` will fail. To get the name back now you need
->   **two** calls, not one — `--force-delete-without-recovery` on its own is a
->   no-op against a secret already in a deletion window, returning success
->   while only re-stamping `DeletedDate`:
+>   the **two-call** form. `--force-delete-without-recovery` on its own is
+>   unreliable against a secret already in a deletion window: across two
+>   teardowns it sometimes deleted and sometimes returned success while only
+>   re-stamping `DeletedDate`. Restoring first makes it deterministic, and
+>   restoring an already-deleted secret is harmless:
 >
 >   ```bash
 >   aws secretsmanager restore-secret --secret-id <id>

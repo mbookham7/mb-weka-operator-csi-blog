@@ -29,8 +29,8 @@ anything** — the only real control is still `terraform destroy`:
   **It is only created if you set `budget_notification_emails`.** A budget
   with no subscribers is legal, shows in the console, and notifies nobody —
   that looks like protection while providing none, so this repo declines to
-  create one. Each address gets a confirmation email it must accept before any
-  alert is delivered.
+  create one. **Whether the alarm actually delivers is not something this repo
+  has verified** — see below.
 
   Note the resolution: **AWS Budgets refreshes cost data roughly three times a
   day.** This is a backstop measured in hours, not a circuit breaker. By the
@@ -75,8 +75,16 @@ the value once into state and holds it.
 the console. It notifies nobody. That is worse than having none, because it
 looks like a control — so the resource is not created at all unless you give
 it somewhere to send the alert. Each address also gets an AWS confirmation
-email it must accept before anything is delivered; an unconfirmed subscription
-is silent.
+subscriber carries **no confirmation state at all**. Verified against the API
+on a live budget: `describe-subscribers-for-notification` returns only
+`Address` and `SubscriptionType`, and `NotificationState: OK` on the
+notification means "threshold not breached", not "subscription healthy".
+
+So there is nothing to check programmatically, and **the first real alert is
+the only proof the thing works.** AWS's subscribe-and-confirm handshake
+applies to SNS-topic subscribers; whether an `EMAIL` subscriber needs any
+action before delivery is untested here. Do not treat this budget as a
+working control until you have seen an email from it.
 
 **Account-wide, not tag-filtered.** A tag-filtered budget *can silently report
 $0*: cost allocation tags must be activated by hand in Billing → Cost
