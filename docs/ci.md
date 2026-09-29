@@ -14,6 +14,31 @@ Everything above is also enforced on every push and pull request by
 "latest" — so CI proves the floor is real rather than aspirational. If you
 bump one, bump the other.
 
+## `ci/check-docs.sh`
+
+The README is a summary with a page per topic behind it, so every cross-page
+link is a relative path plus an anchor derived from a heading. Renaming a heading
+breaks every link pointing at it — **silently**, because a broken markdown
+link still renders as a link and only 404s when somebody clicks it.
+
+The script checks two things:
+
+1. Every relative link resolves — the file exists, and where there is a
+   `#fragment`, some heading in that file actually produces it.
+2. Every page under `docs/` is reachable from the README. An orphan page is
+   documentation nobody will find, which is the same as not having written
+   it.
+
+External `http`/`https` links are deliberately **not** checked: this runs on
+every push and should not fail because somebody else's site is down.
+
+What it cannot catch is a link that resolves to the *wrong* page. That has
+already happened once — the PodDisruptionBudget file was linked to
+[`demo.md`](demo.md), which says nothing about PodDisruptionBudgets, and the
+check passed because the target exists.
+
+## `ci/check-runbook.sh`
+
 `ci/check-runbook.sh` exists because the runbook Terraform prints has been
 wrong twice, and neither case was visible in the source. It lifts the
 `next_steps` heredoc into a scratch module, renders it, and asserts that every

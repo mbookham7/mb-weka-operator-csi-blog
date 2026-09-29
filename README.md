@@ -121,7 +121,8 @@ to name them:
 ├── LICENSE                       MIT
 ├── .github/workflows/ci.yml      the gates, enforced on every push
 ├── ci/
-│   └── check-runbook.sh          renders next_steps and diffs it against the docs
+│   ├── check-runbook.sh          renders next_steps and diffs it against the docs
+│   └── check-docs.sh             every doc link resolves, no page is orphaned
 ├── docs/                         everything this README summarises
 │   ├── deployment.md             prerequisites, walkthrough, teardown
 │   ├── versions.md               module and WEKA release pinning
@@ -130,6 +131,8 @@ to name them:
 │   ├── networking.md             ports, UDP, DPDK, MTU, hostNetwork
 │   ├── node-preparation.md       user data, and the fleet-roll hazard
 │   ├── node-group.md             AZ placement and disruption budgets
+│   ├── cost-controls.md          TTL tag and budget alarm
+│   ├── preflight.md              plan-time instance-type guards
 │   ├── demo.md                   the five recorded beats
 │   ├── ci.md                     the three CI jobs and what they assert
 │   ├── cost-controls.md          TTL tag and budget alarm

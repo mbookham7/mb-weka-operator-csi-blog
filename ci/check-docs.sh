@@ -4,8 +4,8 @@
 #
 # WHY THIS EXISTS
 #
-# The README used to be 1133 lines and is now a summary with ten pages behind
-# it. That is easier to read and much easier to break: every cross-page link
+# The README used to be 1133 lines and is now a summary with a page per topic
+# behind it. Easier to read, and much easier to break: every cross-page link
 # is a relative path plus an anchor derived from a heading, and renaming a
 # heading silently breaks every link pointing at it. Nothing about a broken
 # markdown link fails loudly -- it renders as a link, and 404s only when
