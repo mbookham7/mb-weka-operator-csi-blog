@@ -211,9 +211,11 @@ variable "budget_notification_emails" {
     state either: describe-subscribers-for-notification returns only Address
     and SubscriptionType.
 
-    What remains untested is DELIVERY on a threshold breach, because neither
-    run crossed one. See docs/cost-controls.md for a zero-cost way to prove it
-    with a throwaway $0.01 budget before you rely on this.
+    DELIVERY IS CONFIRMED. A throwaway $0.01 daily budget against an account
+    with $31.81 of spend went to NotificationState: ALARM on creation and the
+    email arrived from no-reply@budgets.alerts.amazonaws.com. During the real
+    runs the budget sat at OK because $31.81 never approached $600/day -- not
+    silent, correctly quiet.
 
     Note that AWS Budgets refreshes cost data around three times a day. This
     is a backstop measured in hours, not a circuit breaker -- by the time it

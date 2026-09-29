@@ -86,14 +86,29 @@ Both parts were checked. The API returns only `Address` and
 no confirmation email at all**. The subscribe-and-confirm handshake people
 expect here is the **SNS** model; an `EMAIL` subscriber has nothing to accept.
 
-So there is nothing to click and nothing to check. Which leaves one thing
-genuinely untested: **whether a threshold breach actually delivers.** Neither
-run crossed one — $600/day against about an hour of spend — so no alert was
-ever due.
+So there is nothing to click and nothing to check.
 
-If you want to prove delivery before relying on it, the cheap way is to
-create a throwaway budget with a limit low enough that existing account spend
-breaches it immediately, and wait for the next refresh:
+**Delivery is confirmed.** A throwaway budget with a `$0.01` daily limit was
+created against an account with $31.81 of spend that day. Its notification
+went to `NotificationState: ALARM` **immediately on creation** — no waiting
+for a refresh cycle — and the email arrived, from
+`no-reply@budgets.alerts.amazonaws.com`. So a breached threshold does reach
+an `EMAIL` subscriber, with no setup beyond listing the address.
+
+Note what that also tells you about the real budget: during both deployment
+runs it sat at `NotificationState: OK`, because $31.81 never approached
+$600/day. **It was not silent, it was correctly quiet** — and the API will
+tell you which:
+
+```bash
+aws budgets describe-notifications-for-budget \
+  --account-id <acct> --budget-name weka-poc-daily-cost \
+  --query "Notifications[].[Threshold,NotificationState]" --output text
+```
+
+If you want to re-prove delivery in your own account, the same trick works
+and costs nothing — a budget with a limit your existing spend already
+exceeds:
 
 ```bash
 aws budgets create-budget --account-id <acct> --budget '{
@@ -105,8 +120,10 @@ aws budgets create-budget --account-id <acct> --budget '{
     "Subscribers":[{"SubscriptionType":"EMAIL","Address":"you@example.com"}]}]'
 ```
 
-Budgets refresh roughly three times a day, so allow up to eight hours. Delete
-it afterwards. Costs nothing.
+It alarms on creation if the spend is already past the threshold, so the mail
+arrives in minutes. The "roughly three times a day" refresh applies to spend
+*creeping* past a threshold, not to one already blown. Delete it afterwards —
+it will mail you daily until you do.
 
 **Account-wide, not tag-filtered.** A tag-filtered budget *can silently report
 $0*: cost allocation tags must be activated by hand in Billing → Cost
