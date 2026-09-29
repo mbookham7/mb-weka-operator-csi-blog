@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Work out the right selector for 10-poddisruptionbudgets.yaml, and optionally
-# write it in.
+# Work out a pod selector that matches exactly the pods you mean, and nothing
+# else.
 #
 # WHY THIS IS NOT JUST `kubectl get pods --show-labels`
 #
@@ -23,11 +23,23 @@
 # tests candidate selectors against the live cluster and keeps only those that
 # select EXACTLY the client pods and nothing else.
 #
+# WHAT THIS IS FOR NOW
+#
+# It was written to fill in a selector for 10-poddisruptionbudgets.yaml. That
+# file no longer defines any budgets, because a PDB over the WEKA client pods
+# was measured to block every eviction rather than pace a roll -- read its
+# header. So this script no longer patches anything.
+#
+# It is kept because the logic is still the right way to build a selector for
+# a PDB over YOUR OWN workloads on the filesystem, which is where a PDB does
+# belong: those are ordinary Deployments whose controller implements `scale`.
+# Point NS/LABEL at them and it will find a selector that matches exactly
+# those pods and nothing else.
+#
 # Usage, from this directory, against a cluster with the operator running and
 # at least one WekaClient scheduled:
 #
-#     ./10-discover-pdb-selector.sh            # report only
-#     ./10-discover-pdb-selector.sh --write    # also patch the PDB manifest
+#     ./10-discover-pdb-selector.sh
 #
 set -euo pipefail
 
@@ -36,8 +48,13 @@ cd "$(dirname "$0")"
 NS="${NS:-weka-operator-system}"
 PDB_FILE="10-poddisruptionbudgets.yaml"
 WRITE=0
-[ "${1:-}" = "--write" ] && WRITE=1
-[ -n "${1:-}" ] && [ "${1:-}" != "--write" ] && { echo "unknown argument: $1 (only --write)" >&2; exit 2; }
+case "${1:-}" in
+  "") ;;
+  --write) echo "--write is gone: $PDB_FILE deliberately defines no budgets now." >&2
+           echo "Read its header. This script reports a selector; paste it where you need it." >&2
+           exit 2 ;;
+  *)       echo "unknown argument: $1 (this script takes none)" >&2; exit 2 ;;
+esac
 
 command -v kubectl >/dev/null || { echo "kubectl not found" >&2; exit 1; }
 kubectl version --request-timeout=8s >/dev/null 2>&1 \
@@ -157,27 +174,8 @@ best = winners[0]
 sel_yaml = "\n".join(f"      {k}: {v}" for k, v in best)
 print(f"\n==> Use this selector:\n\n    matchLabels:\n{sel_yaml}\n")
 
-if not write:
-    print("Re-run with --write to patch %s in place." % pdb_file)
-    sys.exit(0)
+print("Paste that into a PodDisruptionBudget over your own workloads.")
+print("NOT over the WEKA client pods -- see %s for why that does not work." % pdb_file)
+sys.exit(0)
 
-# --- patch the manifest -------------------------------------------------
-src = open(pdb_file).read()
-if "REPLACE_ME" not in src:
-    sys.exit(f"{pdb_file} has no REPLACE_ME placeholder -- already filled in. "
-             "Edit it by hand if you need to change the selector.")
-
-# Replace the placeholder block: the commented guidance plus `app: REPLACE_ME`.
-pattern = re.compile(
-    r"[ \t]*# REPLACE_ME -- see the header\.[^\n]*\n(?:[ \t]*#[^\n]*\n)*[ \t]*app: REPLACE_ME\n")
-replacement = ("      # Discovered by 10-discover-pdb-selector.sh against a live\n"
-               "      # cluster. Operator-version specific -- re-run that script\n"
-               "      # after an operator upgrade.\n"
-               + sel_yaml + "\n")
-new, n = pattern.subn(replacement, src, count=1)
-if n != 1:
-    sys.exit(f"could not locate the placeholder block in {pdb_file} -- patch it by hand")
-open(pdb_file, "w").write(new)
-print(f"Wrote the selector into {pdb_file}.")
-print("Verify with:  ./check-manifests.sh")
 PY

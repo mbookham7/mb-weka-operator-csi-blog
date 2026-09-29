@@ -184,8 +184,8 @@ The manifests, in the order they are applied:
 | `07-rwx-multiwriter.yaml` | 3 replicas on 3 nodes appending to **one** file on a 10Gi RWX PVC. The shared-filesystem demo | demo only |
 | `08-persistence-check.sh` | Writes a sentinel, deletes the pod, cordons its node, asserts the pod reschedules elsewhere and reads the sentinel back | demo only |
 | `09-fio-job.yaml` | Short fio profile against `07`'s volume. **Results are not publishable without an approved WEKA Fact Note** — see the header comment | demo only |
-| `10-poddisruptionbudgets.yaml` | Paces node-group rolls so clients are not all evicted at once. **Fill in the selector** — see the header | recommended |
-| `10-discover-pdb-selector.sh` | Derives that selector from a live cluster and, with `--write`, patches it in | helper |
+| `10-poddisruptionbudgets.yaml` | **Defines nothing — do not apply it.** A PDB over the WEKA client pods blocks every eviction instead of pacing a roll; the file records the measurement so nobody re-adds them | read, don't apply |
+| `10-discover-pdb-selector.sh` | Derives a pod selector from a live cluster. Still useful for a PDB over *your own* workloads, which is where one belongs | helper |
 | `demo.sh` | Drives the five demo beats in order, with pauses, for a recording. `--reset` returns to the pre-demo state | demo only |
 
 ---
@@ -293,11 +293,12 @@ Called out so you do not have to guess which corners were cut:
   backends' AZ is deliberate (see Architecture), but it does mean an AZ
   outage takes every client with it — which, since the storage is already
   AZ-bound, is the same outage either way.
-- **The PodDisruptionBudgets need a selector you fill in.**
-  `10-poddisruptionbudgets.yaml` ships with a `REPLACE_ME` label because the
-  client pod labels come from the operator at runtime, not from the chart.
-  Until you set it, a node-group roll is unrestrained. And a PDB only binds
-  the eviction API — it does nothing for a hard instance termination.
+- **The WEKA client pods cannot be protected by a PodDisruptionBudget.**
+  Measured on operator v1.16.0: `wekacontainers.weka.weka.io` does not
+  implement the `scale` subresource, so a PDB over them reports
+  `disruptionsAllowed: 0` forever and refuses every eviction — blocking a
+  node-group roll rather than pacing it. Rolls are paced by the node group's
+  own `updateConfig` instead. See [docs/node-group.md](docs/node-group.md).
 - **Any change to `node-userdata.tf` rolls the whole node group.** The two
   heredocs in that file are launch-template user data, so editing them — a
   real value *or* a comment inside the heredoc — changes the LT, and

@@ -313,10 +313,11 @@ kubectl apply -f 04-csi-api-secret.yaml
 kubectl apply -f 05-storageclass-dir.yaml
 kubectl apply -f 06-smoke-test.yaml
 
-# Recommended: paces future node-group rolls. Derive the selector from the
-# running operator first -- the file ships with a REPLACE_ME placeholder.
-./10-discover-pdb-selector.sh --write
-kubectl apply -f 10-poddisruptionbudgets.yaml
+# NOTE: there is no 10-* step. A PodDisruptionBudget over the WEKA client
+# pods was tried and it BLOCKS every eviction rather than pacing a roll --
+# 10-poddisruptionbudgets.yaml now defines no objects and explains why.
+# Node-group rolls are already paced by the node group's own update config.
+# See docs/node-group.md.
 ```
 
 Everything above is the deployment. The demo assets are optional and come
@@ -402,7 +403,6 @@ WEKA client → mount.
 # Teardown
 
 ```bash
-kubectl delete -f manifests/10-poddisruptionbudgets.yaml --ignore-not-found
 kubectl delete -f manifests/09-fio-job.yaml --ignore-not-found
 kubectl delete -f manifests/07-rwx-multiwriter.yaml --ignore-not-found
 kubectl delete -f manifests/06-smoke-test.yaml

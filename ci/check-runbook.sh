@@ -117,7 +117,9 @@ for f in ['01-weka-client-secret.yaml', '02-weka-nics-policy.yaml',
           '03-weka-client.yaml', '04-csi-api-secret.yaml',
           '05-storageclass-dir.yaml', '06-smoke-test.yaml',
           '07-rwx-multiwriter.yaml', '08-persistence-check.sh',
-          '09-fio-job.yaml', '10-poddisruptionbudgets.yaml']:
+          '09-fio-job.yaml']:
+          # NOT 10-poddisruptionbudgets.yaml -- it defines no objects and is
+          # deliberately absent from the apply sequence. See its header.
     if f in text:
         ok(f"runbook names {f}")
     else:
