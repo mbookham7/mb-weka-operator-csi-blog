@@ -103,6 +103,22 @@ That one is not a tripwire, it is simply absent. See
 throttles an account. They are a label and a tripwire. The only real control
 is `terraform destroy` — see [Teardown](deployment.md#teardown).
 
+## What happens to these on teardown
+
+Both go with the stack, verified on the 2026-09-29 run:
+
+- The **budget** is a Terraform resource, so `terraform destroy` removes it.
+  Confirmed afterwards with `aws budgets describe-budgets`: nothing left. It
+  does not linger as an orphan alarming on an account with no deployment.
+- The **TTL tags** disappear with the resources they were on.
+
+Which is worth saying plainly, because it means **neither survives to tell you
+about a failed teardown.** If `destroy` leaves something behind — and the
+first pass is *expected* to, see [Teardown](deployment.md#teardown) — the
+budget that would have warned you about the resulting spend has usually
+already been destroyed itself. Check the console after a teardown; do not wait
+for an alert that can no longer fire.
+
 ## Permissions
 
 `budgets:*` is needed to apply, but **only if you set

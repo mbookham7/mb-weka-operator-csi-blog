@@ -427,6 +427,31 @@ then have to strip by hand.
 > have in state. Destroy also races: the healing Lambda can replace a backend
 > while Terraform is deleting the autoscaling group.
 >
+> ### The tagging API will show you ghosts
+>
+> The obvious way to sweep for orphans is by tag:
+>
+> ```bash
+> aws resourcegroupstaggingapi get-resources \
+>   --tag-filters "Key=Project,Values=weka-eks-demo"
+> ```
+>
+> **It lags, badly.** On this run it reported **90 resources still tagged** —
+> 51 ENIs, 15 volumes, 9 instances, a NAT gateway — with Terraform state
+> empty and everything actually gone. Every single one resolved to
+> `terminated`, `deleted` or `PendingDeletion` when queried directly.
+>
+> So use it to get a candidate list, never as the answer. Confirm with the
+> service's own API:
+>
+> ```bash
+> aws ec2 describe-instances --filters "Name=tag:Project,Values=weka-eks-demo" \
+>   --query "Reservations[].Instances[].State.Name" --output text | sort | uniq -c
+> ```
+>
+> Terminated instances also linger in `describe-instances` for about an hour.
+> They are not billed; filter on `instance-state-name` rather than counting rows.
+>
 > After `destroy` reports success, go and look at:
 >
 > - **EC2** — instances, and the **cluster placement group**
@@ -444,6 +469,11 @@ then have to strip by hand.
 > - **DynamoDB** — the cluster state table
 > - **Lambda and Step Functions** — the deploy/scale/status functions
 > - **CloudWatch log groups** — cheap, but they accumulate
+> - **KMS keys** — the EKS module creates several. On this run 8 were left in
+>   `PendingDeletion` with windows spread over the following month. That is
+>   the normal outcome, not an orphan, but they are worth a glance because
+>   nothing else in the teardown mentions them:
+>   `aws kms describe-key --key-id <id> --query 'KeyMetadata.[KeyState,DeletionDate]'`
 > - **EBS volumes and snapshots** — anything not marked
 >   `delete_on_termination`
 > - **Elastic IPs** — a released NAT EIP still bills if it stays allocated
@@ -451,6 +481,37 @@ then have to strip by hand.
 > If `destroy` fails partway, re-run it. If it fails twice on the same
 > resource, delete that resource in the console and re-run — do not start
 > hand-editing state.
+>
+> ### Do not pipe `terraform destroy` into anything
+>
+> ```bash
+> terraform destroy -auto-approve | tail -40     # exit code is tail's: ALWAYS 0
+> ```
+>
+> A shell pipeline reports the exit status of its **last** command, so this
+> reports success even when Terraform failed — and the failure above is one
+> you should expect, so you will be told "exit 0" on a teardown that left the
+> placement group, a VPC and two subnets behind. It cost a wrong "the destroy
+> finished" on this very run.
+>
+> Redirect instead, and check the code:
+>
+> ```bash
+> terraform destroy -auto-approve -no-color > destroy.log 2>&1; echo "rc=$?"
+> ```
+>
+> (Or set `pipefail`.) The same applies to `| tee`, and the truncation loses
+> the log you would want for exactly the failure you just hit.
+>
+> **Re-verified on 5.1.32.19, 2026-09-29.** The behaviour below is not
+> folklore — it reproduced exactly. Measured on that run:
+>
+> | | |
+> |---|---|
+> | first pass | **22m43s**, 168 of 173 resources destroyed, then failed |
+> | left behind | 5 — the placement group, the VPC, two subnets, and `time_static` |
+> | second pass | **~40 seconds**, all 5 gone, exit 0 |
+> | slowest single resource | the shared security group, **14m10s** — it is referenced by the backends, the EKS nodes *and* the Secrets Manager endpoint, so it cannot go until all of them have |
 >
 > **Expect exactly this on the first `destroy`:**
 >

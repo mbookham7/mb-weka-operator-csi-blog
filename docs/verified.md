@@ -34,7 +34,11 @@ assumed.
 | Persistence across node loss | sentinel written on one node, pod deleted, node cordoned, pod rescheduled elsewhere, sentinel read back intact |
 | fio job | ran to completion: `fio-3.39` from Alpine community, all three stanzas as separate run groups, 0 ENOSPC inside the quota. **No figures recorded here — see the Fact Note requirement** |
 | PodDisruptionBudget | **does not work for the client pods.** `disruptionsAllowed: 0` permanently, `wekacontainers.weka.weka.io does not implement the scale subresource`; every eviction refused. The node group's own `maxUnavailablePercentage: 33` already paces rolls |
-| Teardown | both PVs auto-deleted on PVC delete, i.e. the CSI plugin removed the backing WEKA directories |
+| Teardown: PVs | both PVs auto-deleted on PVC delete, i.e. the CSI plugin removed the backing WEKA directories |
+| Teardown: first pass | **22m43s**, 168 of 173 resources, then failed on `InvalidPlacementGroup.InUse` — exactly as documented. The shared security group alone took **14m10s** |
+| Teardown: second pass | **~40s**, the remaining 5 (placement group, VPC, two subnets, `time_static`), exit 0, state empty |
+| Teardown: orphans | none billing. Instances `terminated`, volumes and ENIs gone, NAT gateway `deleted`, budget destroyed with the stack. 8 KMS keys and 4 secrets left `PendingDeletion` / scheduled, which is expected |
+| Teardown: tag sweep | the Resource Groups Tagging API still listed **90 resources** tagged `Project=weka-eks-demo` with state empty and everything gone — all of them terminated or pending deletion. Do not trust it as an orphan check |
 
 Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 (first attempt clean — no `InsufficientRolePermissions` race this time),
@@ -45,6 +49,12 @@ waiting on image pulls and the client join.
 
 That is faster than the hour the 4.4.37 run suggested, but budget the hour
 anyway — the pull dominates and it comes over a single NAT gateway.
+
+**Teardown takes longer than you would expect: about 23 minutes for the first
+pass plus a second one.** Total lifetime of this deployment, first `apply` to
+an empty state, was **1h18m**, with the six `i3en.6xlarge` up for roughly an
+hour. Budget the teardown time when you plan the spend — it is not free
+minutes at the end.
 
 ---
 
