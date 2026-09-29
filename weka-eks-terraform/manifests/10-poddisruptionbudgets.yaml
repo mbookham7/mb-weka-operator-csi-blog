@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# PodDisruptionBudgets for the WEKA client containers
+# ---------------------------------------------------------------------------
+# WHY THIS MATTERS HERE MORE THAN IT USUALLY DOES
+#
+# Every node in the weka_clients group runs a WEKA client, and losing a client
+# is not like losing a stateless replica -- it is a cluster membership change
+# on the WEKA side and an unmounted filesystem for every pod on that node.
+#
+# And node replacement is not rare. `node-userdata.tf` is launch-template user
+# data, so ANY change to it -- including one that only alters a value -- makes
+# Terraform hand EKS a new launch template version, and EKS then performs a
+# rolling replacement of the whole group on the next `apply`. Without a
+# disruption budget, that roll proceeds as fast as the node group can cycle
+# instances, with no check that the previous client rejoined the cluster
+# before the next one goes away.
+#
+# A PDB makes the drain phase of that roll stop and wait instead.
+#
+# ---------------------------------------------------------------------------
+# READ THIS BEFORE TRUSTING IT: WHAT A PDB DOES NOT DO
+# ---------------------------------------------------------------------------
+#   * It is only consulted by the EVICTION API. A managed node group update
+#     drains nodes and respects PDBs, and `kubectl drain` does. A hard
+#     instance termination -- spot reclaim, an AZ event, someone hitting
+#     Terminate in the console -- does not evict anything and a PDB is not
+#     involved.
+#
+#   * DAEMONSET PODS ARE NOT EVICTED during a drain, they are deleted, so a
+#     PDB does not protect them. If the operator in your version manages the
+#     client containers as a DaemonSet rather than as individually-owned
+#     pods, this file will not restrain a node roll. CONFIRM WHICH YOU HAVE
+#     before relying on it:
+#
+#         kubectl -n weka-operator-system get pod <client-pod> \
+#           -o jsonpath='{.metadata.ownerReferences[*].kind}{"\n"}'
+#
+#     A `DaemonSet` there means the PDB is decorative. A `WekaContainer`, or
+#     no owner at all, means it applies.
+#
+#   * A PDB whose selector matches NOTHING is silently inert. It reports
+#     ALLOWED DISRUPTIONS and protects nothing, which looks exactly like
+#     working protection. `check-manifests.sh` verifies the selector matches
+#     real pods for exactly this reason.
+#
+# ---------------------------------------------------------------------------
+# YOU MUST FILL IN THE SELECTOR
+# ---------------------------------------------------------------------------
+# The WEKA client pods are created by the operator's controller at runtime,
+# not by the Helm chart, so their labels are not in the chart and cannot be
+# stated here in advance -- they vary by operator version. Guessing would ship
+# a PDB that matches nothing, which is worse than shipping none.
+#
+# Find the real labels on a running client pod:
+#
+#     kubectl -n weka-operator-system get pods -L app --show-labels
+#
+#     kubectl -n weka-operator-system get pod <client-pod> \
+#       -o jsonpath='{.metadata.labels}' | python3 -m json.tool
+#
+# Then replace the REPLACE_ME selector below with one or two labels that
+# match the client pods AND NOTHING ELSE. Too broad is its own failure: a
+# selector that also catches the CSI node plugin or the node agent budgets
+# them together and blocks drains for the wrong reason.
+#
+# `check-manifests.sh` fails while REPLACE_ME is still here.
+#
+# Apply with: kubectl apply -f 10-poddisruptionbudgets.yaml
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: weka-client
+  namespace: weka-operator-system
+spec:
+  # maxUnavailable, not minAvailable, and an INTEGER not a percentage.
+  #
+  # A percentage requires the controller owning the pods to expose a scale
+  # subresource so Kubernetes can work out the expected count. The operator's
+  # per-node client containers do not, and a percentage against pods it cannot
+  # size is how you get a PDB that never allows any disruption at all -- which
+  # does not fail safe, it wedges every drain on the cluster forever.
+  #
+  # 1 means: roll one client node at a time, and only once the previous one
+  # is back. That is the correct pace for storage clients regardless of how
+  # many nodes there are -- the point is never to have two nodes' worth of
+  # mounts missing at once.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      # REPLACE_ME -- see the header. `kubectl -n weka-operator-system get
+      # pods --show-labels` on a running cluster, then put the label that
+      # identifies the WEKA client containers here.
+      app: REPLACE_ME
+---
+# The node agent, whose label IS knowable: the chart's PodMonitor selects it
+# with `app: weka-node-agent`, so this one needs no editing.
+#
+# Included because the node agent is what reconciles the client container on
+# each node -- losing several at once during a roll means several nodes with
+# no one to rebuild their client. If it turns out to be a DaemonSet in your
+# version, see the caveat above: this becomes decorative rather than wrong.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: weka-node-agent
+  namespace: weka-operator-system
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: weka-node-agent

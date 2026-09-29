@@ -97,9 +97,19 @@ is_tracked() { # is_tracked <path>
   else [ -f "$1" ]; fi
 }
 
-committed_content() { # committed_content <path> -- empty if untracked
-  if in_git; then git show "HEAD:./$1" 2>/dev/null
-  else cat "$1" 2>/dev/null; fi
+committed_content() { # committed_content <path> -- what git would ship
+  #
+  # HEAD first, then the INDEX. A file that is staged but not yet committed
+  # exists as far as `git ls-files` is concerned but has no HEAD blob, and
+  # reading an empty one would look identical to "the placeholder was
+  # removed" -- which is the wrong answer at exactly the moment someone is
+  # about to commit a new file. The index is what they are about to commit,
+  # so it is the honest thing to check.
+  if in_git; then
+    git show "HEAD:./$1" 2>/dev/null || git show ":./$1" 2>/dev/null
+  else
+    cat "$1" 2>/dev/null
+  fi
 }
 
 check() { # check <label> <expected> <actual>
@@ -145,6 +155,23 @@ ym() { ruby -ryaml -e '
   end
   puts v.nil? ? "" : v
 ' "$1" "$2" "$3" 2>/dev/null; }
+
+# Names of every document of a given kind in a multi-doc file.
+ym_list() { ruby -ryaml -e '
+  f = File.read(ARGV[0])
+  docs = (Psych::VERSION.split(".")[0].to_i >= 4 ? YAML.load_stream(f, aliases: true) : YAML.load_stream(f)).compact
+  docs.each { |d| puts d["metadata"]["name"] if d.is_a?(Hash) && d["kind"] == ARGV[1] }
+' "$1" "$2" 2>/dev/null; }
+
+# A PDB's matchLabels rendered as the k=v,k=v that `kubectl -l` wants.
+ym_pdb_selector() { ruby -ryaml -e '
+  f = File.read(ARGV[0])
+  docs = (Psych::VERSION.split(".")[0].to_i >= 4 ? YAML.load_stream(f, aliases: true) : YAML.load_stream(f)).compact
+  d = docs.find { |x| x.is_a?(Hash) && x["kind"] == "PodDisruptionBudget" && x["metadata"]["name"] == ARGV[1] }
+  exit if d.nil?
+  m = d.dig("spec", "selector", "matchLabels") || {}
+  puts m.map { |k, v| "#{k}=#{v}" }.join(",")
+' "$1" "$2" 2>/dev/null; }
 
 # Kubernetes/fio quantity -> bytes, so sizes written in different units can be
 # compared. Ki/Mi/Gi/Ti are powers of 1024, and so are fio's k/m/g. awk rather
@@ -305,6 +332,58 @@ if [ -n "$pvc_b" ] && [ -n "$fio_b" ] && [ "$pvc_b" -gt 0 ] 2>/dev/null; then
   fi
 else
   printf '  NOTE  %-44s could not parse (fio=%s pvc=%s)\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"
+fi
+
+# --- PodDisruptionBudgets: the selector has to match something -----------
+#
+# A PDB whose selector matches no pods is SILENTLY INERT. It exists, it shows
+# ALLOWED DISRUPTIONS, `kubectl get pdb` looks healthy, and it restrains
+# nothing -- the same "looks like protection, provides none" shape as a budget
+# with no subscribers.
+#
+# The client pod labels come from the operator's controller at runtime, not
+# from the Helm chart, so 10-poddisruptionbudgets.yaml ships with a
+# REPLACE_ME selector you fill in per operator version -- the same convention
+# as joinIpPorts in 03. Offline inverts it, for the same reason: in a clean
+# checkout the placeholder is the correct committed state.
+if [ -f 10-poddisruptionbudgets.yaml ]; then
+  if [ "$OFFLINE" -eq 1 ]; then
+    # An untracked file has no committed copy, and reading one returns empty
+    # -- which would otherwise look identical to "the placeholder was
+    # removed". Say which it is.
+    if ! is_tracked 10-poddisruptionbudgets.yaml; then
+      printf '  NOTE  %-44s not committed yet -- nothing to check\n' "10-poddisruptionbudgets.yaml"
+    elif committed_content 10-poddisruptionbudgets.yaml | grep -q 'REPLACE_ME'; then
+      printf '  OK    %-44s committed copy still has its placeholder\n' "10-poddisruptionbudgets.yaml"
+    else
+      printf '  NOTE  %-44s placeholder filled in the committed copy\n' "10-poddisruptionbudgets.yaml"
+      printf '        %s\n' "harmless if the label is generic, but it is operator-version specific --"
+      printf '        %s\n' "check it is not just your cluster's labels baked into the repo"
+    fi
+  elif grep -q 'REPLACE_ME' 10-poddisruptionbudgets.yaml; then
+    printf '  TODO  %-44s selector still REPLACE_ME -- the PDB will match nothing\n' "10-poddisruptionbudgets.yaml"
+    printf '        %s\n' "kubectl -n weka-operator-system get pods --show-labels"
+    fail=1
+  else
+    printf '  OK    %-44s selector filled in\n' "10-poddisruptionbudgets.yaml"
+  fi
+
+  # Against a live cluster, prove each selector actually matches pods.
+  if [ "$OFFLINE" -eq 0 ] && kubectl version --request-timeout=8s >/dev/null 2>&1; then
+    for pdb in $(ym_list 10-poddisruptionbudgets.yaml PodDisruptionBudget); do
+      sel=$(ym_pdb_selector 10-poddisruptionbudgets.yaml "$pdb")
+      if [ -z "$sel" ] || printf '%s' "$sel" | grep -q 'REPLACE_ME'; then
+        continue
+      fi
+      n=$(kubectl -n weka-operator-system get pods -l "$sel" -o name 2>/dev/null | grep -c . || true)
+      if [ "${n:-0}" -gt 0 ]; then
+        printf '  OK    %-44s %s matches %s pod(s)\n' "pdb/$pdb selector" "$sel" "$n"
+      else
+        printf '  DRIFT %-44s %s matches NO pods -- the PDB protects nothing\n' "pdb/$pdb selector" "$sel"
+        fail=1
+      fi
+    done
+  fi
 fi
 
 # --- the new scripts have to be executable -------------------------------

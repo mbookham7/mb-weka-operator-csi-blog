@@ -45,8 +45,10 @@
 #           -> aws_eks_node_group.launch_template.version changes
 #             -> EKS ROLLS EVERY NODE IN THE GROUP
 #
-# Every node in this group is a WEKA client, there is no PodDisruptionBudget,
-# and there is no drain handling for the client containers. A typo fix should
+# Every node in this group is a WEKA client. manifests/10-poddisruptionbudgets.yaml
+# restrains that roll ONCE ITS SELECTOR IS FILLED IN -- it ships with a
+# placeholder, because the client pod labels come from the operator at
+# runtime. Until then the roll is unrestrained. A typo fix should
 # not be able to cycle the storage clients of a live cluster, and before this
 # split it could: one 37-line comment added to the sysctl block grew the
 # rendered script from 3302 to 5332 bytes.
@@ -73,9 +75,10 @@
 # version and EKS performs a rolling node-group update on its own.
 #
 # Plan accordingly. `terraform plan` showing a launch-template change means
-# every node in the group is about to be replaced, one at a time, with no
-# disruption budget protecting the WEKA clients on them. If you want that to
-# be an explicit decision rather than a side effect, set
+# every node in the group is about to be replaced, one at a time. Whether
+# anything paces that depends on manifests/10-poddisruptionbudgets.yaml
+# having a real selector. If you want the roll to be an explicit decision
+# rather than a side effect, set
 # `update_launch_template_default_version = false` on the node group in eks.tf
 # and move the version forward deliberately.
 

@@ -194,6 +194,10 @@ output "next_steps" {
        kubectl apply -f 05-storageclass-dir.yaml
        kubectl apply -f 06-smoke-test.yaml
 
+       # Recommended: paces future node-group rolls. Fill in the selector
+       # first -- it ships with a REPLACE_ME placeholder.
+       kubectl apply -f 10-poddisruptionbudgets.yaml
+
        # Optional demo (needs 3 client nodes):
        kubectl apply -f 07-rwx-multiwriter.yaml
        ./08-persistence-check.sh

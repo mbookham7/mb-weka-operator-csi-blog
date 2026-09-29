@@ -117,7 +117,7 @@ for f in ['01-weka-client-secret.yaml', '02-weka-nics-policy.yaml',
           '03-weka-client.yaml', '04-csi-api-secret.yaml',
           '05-storageclass-dir.yaml', '06-smoke-test.yaml',
           '07-rwx-multiwriter.yaml', '08-persistence-check.sh',
-          '09-fio-job.yaml']:
+          '09-fio-job.yaml', '10-poddisruptionbudgets.yaml']:
     if f in text:
         ok(f"runbook names {f}")
     else:
@@ -135,9 +135,8 @@ if './check-manifests.sh' in text:
 else:
     bad("runbook does not mention ./check-manifests.sh")
 
-# 3. The RWX payoff command matches every doc that carries it, byte for
-#    byte. This is the
-#    check that catches the $2-vs-\$2 class of bug.
+# 3. The RWX payoff command matches every doc that carries it, byte for byte.
+#    This is the check that catches the $2-vs-\$2 class of bug.
 def payoff(s):
     return [l.strip() for l in s.splitlines()
             if 'kubectl exec deploy/weka-rwx-demo' in l

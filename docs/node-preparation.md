@@ -37,10 +37,11 @@ edit a comment inside <<-SCRIPT or <<-NODECONFIG
           -> EKS ROLLS EVERY NODE IN THE GROUP
 ```
 
-Every node in that group is a WEKA client, there is no PodDisruptionBudget,
-and there is no drain handling for the client containers. A typo fix should
-not be able to cycle the storage clients of a live cluster — and before the
-split, it could. One 37-line comment added to the sysctl block grew the
+Every node in that group is a WEKA client.
+[`10-poddisruptionbudgets.yaml`](demo.md) restrains that roll — but only once
+its selector is filled in, since the client pod labels come from the operator
+at runtime rather than from the chart. A typo fix should not be able to cycle
+the storage clients of a live cluster — and before the split, it could. One 37-line comment added to the sysctl block grew the
 rendered script from 3302 to 5332 bytes.
 
 **The rule:**
@@ -66,8 +67,9 @@ group references it, `terraform apply` hands EKS a new LT version and EKS
 performs a rolling node-group update on its own.
 
 Plan accordingly. **`terraform plan` showing a launch-template change means
-every node in the group is about to be replaced**, one at a time, with no
-disruption budget protecting the WEKA clients on them. If you want that to be
+every node in the group is about to be replaced**, one at a time. Whether
+anything paces that depends on the PodDisruptionBudgets having a real
+selector — see [Deploying](deployment.md). If you want that to be
 an explicit decision rather than a side effect, set
 `update_launch_template_default_version = false` on the node group in
 `eks.tf` and move the version forward deliberately.

@@ -29,9 +29,10 @@ module "weka" {
   # that stripes every write across peers. Durability comes from WEKA's own
   # protection level and hot spare within the AZ, not from AZ spread.
   #
-  # The EKS worker nodes span both private subnets. Clients being in a
-  # different AZ from the backends is fine -- that is a normal client access
-  # path -- it just costs cross-AZ data transfer.
+  # The EKS worker node group is pinned to THIS SAME SUBNET -- see the long
+  # comment on `subnet_ids` in eks.tf. Clients in another AZ would work, but
+  # they buy no availability (the storage is already AZ-bound) and pay
+  # cross-AZ transfer on every read and write.
   subnet_ids = [module.vpc.private_subnets[0]]
 
   # The shared security group from security-groups.tf. Passing this suppresses

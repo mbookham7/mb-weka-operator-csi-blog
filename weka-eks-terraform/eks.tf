@@ -112,7 +112,44 @@ module "eks" {
       max_size     = var.client_node_count
       desired_size = var.client_node_count
 
-      subnet_ids = module.vpc.private_subnets
+      # ---------------------------------------------------------------
+      # SAME AZ AS THE WEKA BACKENDS. One subnet, on purpose.
+      # ---------------------------------------------------------------
+      # weka.tf pins the backends to private_subnets[0] because the WEKA
+      # module enforces a single-AZ cluster. This puts the clients in that
+      # same AZ.
+      #
+      # The reason is that spreading the clients buys nothing and costs on
+      # every I/O:
+      #
+      #   IT BUYS NO AVAILABILITY. The storage is already AZ-bound. If the
+      #   backends' AZ fails, every client loses its filesystem whether or not
+      #   the client itself is still running. A client in AZ B survives the
+      #   outage with nothing to talk to, which is not availability, it is a
+      #   pod waiting on a mount that will never come back.
+      #
+      #   IT COSTS ON EVERY BYTE. Cross-AZ traffic is charged in both
+      #   directions, and for a parallel filesystem every read and write is
+      #   on that path. On a storage benchmark that is not a rounding error
+      #   -- it can exceed the NAT charge, which is itemised in the cost
+      #   table while this was not.
+      #
+      #   IT MAKES MEASUREMENTS NON-DETERMINISTIC. With nodes spread across
+      #   AZs, throughput depended on which AZ the scheduler happened to put
+      #   the pod in. 09-fio-job.yaml is unreproducible under that.
+      #
+      # THE TRADE-OFF, stated plainly: this node group is now a single point
+      # of failure at AZ granularity. That is already true of the storage, so
+      # it changes the blast radius of an AZ outage from "storage is gone" to
+      # "storage and its clients are gone" -- which in practice is the same
+      # outage. It does mean a single AZ must have capacity for
+      # client_node_count instances of client_instance_type.
+      #
+      # NOTE the EKS CLUSTER still spans both private subnets (see
+      # `subnet_ids` on the module above). The control plane requires two AZs;
+      # the node group does not, and these are separate inputs. Do not
+      # "fix" the cluster-level one to match.
+      subnet_ids = [module.vpc.private_subnets[0]]
 
       # The WekaClient CR and the CSI node plugin both select on this label.
       # If they disagree -- or if this is missing -- the client containers never

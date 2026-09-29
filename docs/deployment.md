@@ -269,7 +269,69 @@ wrong password, so you will not suspect the encoding.
 | Distinctive keys | `join-secret` | `endpoints`, `scheme` |
 | Organization key | `org` | `organization` |
 
-## Check for drift before you apply
+> **`03-weka-client.yaml` is tracked, not a `.example`.** It ships with obvious
+> placeholder `joinIpPorts` that you edit in place. The check fails while they
+> are still placeholders, so you cannot forget — but note the reverse hazard
+> too: do not commit your real backend IPs back. They are not secret, but they
+> are live infrastructure detail, and the next reader inherits addresses that
+> no longer exist.
+>
+> **It cannot check whether your secrets are *current*.** After a destroy and
+> redeploy, `01-weka-client-secret.yaml` and `04-csi-api-secret.yaml` still
+> hold the **previous** cluster's admin password, join token and backend IPs —
+> all now invalid — and the check will report them as "filled in". Regenerate
+> both from the `.example` templates on every redeploy. Otherwise the client
+> fails to join with an auth error and the CSI plugin times out against
+> backend IPs that no longer exist.
+
+Then apply in order, editing `joinIpPorts` in `03-weka-client.yaml` with the
+backend IPs from step 3:
+
+```bash
+kubectl apply -f 01-weka-client-secret.yaml
+kubectl apply -f 02-weka-nics-policy.yaml     # BEFORE the client -- see below
+kubectl apply -f 03-weka-client.yaml
+kubectl apply -f 04-csi-api-secret.yaml
+kubectl apply -f 05-storageclass-dir.yaml
+kubectl apply -f 06-smoke-test.yaml
+
+# Recommended: paces future node-group rolls. Edit the selector first --
+# the file ships with a REPLACE_ME placeholder. See its header.
+kubectl apply -f 10-poddisruptionbudgets.yaml
+```
+
+Everything above is the deployment. The demo assets are optional and come
+after it:
+
+```bash
+kubectl apply -f 07-rwx-multiwriter.yaml      # needs >= 3 client nodes
+./08-persistence-check.sh                     # needs >= 2 client nodes
+kubectl apply -f 09-fio-job.yaml              # read its header comment first
+```
+
+Or let `./demo.sh` drive all of it in order — see [Demo](demo.md).
+
+> `02-weka-nics-policy.yaml` is **required on AWS, and the easiest file to
+> overlook.** The WEKA client's data path is DPDK: it binds NICs directly from
+> userspace and cannot share the node's primary ENI with the kubelet and the
+> VPC CNI. That `WekaPolicy` attaches dedicated data-path ENIs and then
+> advertises them to the scheduler as the extended resource
+> `weka.io/weka-nics`, one of which the client pod requests per core.
+>
+> Nothing in Terraform can do this — the node group creates an instance with
+> one ENI, and the VPC CNI's additional ENIs are for pod IPs, not for WEKA.
+> Skip this file and the client pod sits in `Pending` forever with
+> `1 Insufficient weka.io/weka-nics`, with a perfectly healthy cluster and node
+> either side of it.
+>
+> Keep `dataNICsNumber` >= the client's `coresNum`.
+
+> `05-storageclass-dir.yaml` is **mandatory here.** The Operator auto-creates
+> StorageClasses only for an in-cluster `WekaCluster` custom resource it manages
+> itself, because that is where it gets the filesystem name and endpoints from.
+> Our backend came from Terraform, so there is no such object and no
+> StorageClass appears on its own. Any quickstart that skips this step assumed
+> an operator-managed cluster.
 
 ## Check for drift before you apply
 
@@ -321,6 +383,7 @@ WEKA client → mount.
 # Teardown
 
 ```bash
+kubectl delete -f manifests/10-poddisruptionbudgets.yaml --ignore-not-found
 kubectl delete -f manifests/09-fio-job.yaml --ignore-not-found
 kubectl delete -f manifests/07-rwx-multiwriter.yaml --ignore-not-found
 kubectl delete -f manifests/06-smoke-test.yaml

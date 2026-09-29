@@ -51,9 +51,17 @@ takes to make it eligible to be a WEKA client.
 The WEKA backends are **single-AZ**. That is not a shortcut — the module
 enforces it. A WEKA cluster stripes every write across its peers, so cross-AZ
 round-trip time would dominate the latency budget; durability comes from WEKA's
-own protection level and hot spare inside the AZ. The EKS nodes span both AZs,
-because the EKS control plane requires it and because clients accessing
-backends across an AZ boundary is a perfectly normal access path.
+own protection level and hot spare inside the AZ.
+
+**The EKS worker nodes are pinned to that same AZ.** The VPC has private
+subnets in two AZs and the EKS *cluster* spans both — the control plane
+requires it — but the `weka_clients` node group deliberately uses only the
+backends' subnet. Spreading the clients would buy no availability, because
+the storage is already AZ-bound: a client that survives an AZ outage in the
+other zone is a pod waiting on a mount that is never coming back. It would
+cost on every byte, since cross-AZ traffic is charged both ways and for a
+parallel filesystem every read and write is on that path. See the comment on
+`subnet_ids` in `eks.tf`.
 
 ```mermaid
 graph TB
@@ -63,7 +71,7 @@ graph TB
             N1["<b>EKS node</b> m6i.8xlarge<br/>label weka.io/supports-clients=true<br/>HugePages 3072×2MiB · CPUs 0,16 reserved<br/>WekaClient pod (hostNetwork)<br/>CSI node plugin"]
         end
         subgraph AZB["Availability Zone B &nbsp;·&nbsp; private subnet 10.0.16.0/20"]
-            N2["<b>EKS nodes</b> m6i.8xlarge<br/>same node prep, same label"]
+            N2["<i>EKS cluster subnet only</i><br/>no worker nodes here —<br/>the node group is pinned to AZ A"]
         end
         subgraph PUB["public subnets"]
             NAT["NAT gateway"]
@@ -74,19 +82,18 @@ graph TB
     NET(["get.weka.io · quay.io<br/>drivers.weka.io"])
 
     WEKA <==>|"WEKA data path — UDP<br/>control + REST — TCP"| N1
-    WEKA <==>|"cross-AZ: same ports,<br/>plus data transfer cost"| N2
+    EKSCP -.->|"control plane needs<br/>a second AZ"| N2
     N1 -.->|kubelet| EKSCP
-    N2 -.->|kubelet| EKSCP
     WEKA --> NAT
     N1 --> NAT
-    N2 --> NAT
     NAT --> NET
 
     classDef weka fill:#1f6feb,stroke:#0b3d91,color:#fff
     classDef node fill:#2da44e,stroke:#116329,color:#fff
     classDef infra fill:#6e7781,stroke:#424a53,color:#fff
     class WEKA weka
-    class N1,N2 node
+    class N1 node
+    class N2 infra
     class NAT,EKSCP,NET infra
 ```
 
@@ -173,6 +180,7 @@ The manifests, in the order they are applied:
 | `07-rwx-multiwriter.yaml` | 3 replicas on 3 nodes appending to **one** file on a 10Gi RWX PVC. The shared-filesystem demo | demo only |
 | `08-persistence-check.sh` | Writes a sentinel, deletes the pod, cordons its node, asserts the pod reschedules elsewhere and reads the sentinel back | demo only |
 | `09-fio-job.yaml` | Short fio profile against `07`'s volume. **Results are not publishable without an approved WEKA Fact Note** — see the header comment | demo only |
+| `10-poddisruptionbudgets.yaml` | Paces node-group rolls so clients are not all evicted at once. **Fill in the selector** — see the header | recommended |
 | `demo.sh` | Drives the five demo beats in order, with pauses, for a recording. `--reset` returns to the pre-demo state | demo only |
 
 ---
@@ -268,10 +276,15 @@ Called out so you do not have to guess which corners were cut:
   backend with DynamoDB locking before more than one person touches this.
 - **Single NAT gateway** — a cost choice, and an AZ-level single point of
   failure for egress.
-- **The node group is fixed-size with no PodDisruptionBudget** or drain
-  handling for the WEKA clients. Worth pairing with the next point, because
-  together they mean an ordinary Terraform change can cycle every storage
-  client in the cluster unprotected.
+- **The node group is fixed-size and single-AZ.** Pinning it to the
+  backends' AZ is deliberate (see Architecture), but it does mean an AZ
+  outage takes every client with it — which, since the storage is already
+  AZ-bound, is the same outage either way.
+- **The PodDisruptionBudgets need a selector you fill in.**
+  `10-poddisruptionbudgets.yaml` ships with a `REPLACE_ME` label because the
+  client pod labels come from the operator at runtime, not from the chart.
+  Until you set it, a node-group roll is unrestrained. And a PDB only binds
+  the eviction API — it does nothing for a hard instance termination.
 - **Any change to `node-userdata.tf` rolls the whole node group.** The two
   heredocs in that file are launch-template user data, so editing them — a
   real value *or* a comment inside the heredoc — changes the LT, and
