@@ -34,8 +34,11 @@ vCPUs**, so you will very likely need a quota increase — see
 **[Prerequisites](docs/deployment.md#prerequisites)**.
 
 The repo ships an `ExpiresAt` tag on every resource and an optional daily
-budget alarm. **Neither stops anything** — the only real control is
-`terraform destroy`. See **[Cost controls](docs/cost-controls.md)**.
+budget alarm. **Neither stops anything** — the only control this repo ships is
+`terraform destroy`. Your *account* may be a different matter: a governance
+Lambda that stops untagged instances on a timer will take the backends with
+it, and since they are `i3en` instance-store, a stop is data loss rather than
+a pause. Check before you deploy — see **[Cost controls](docs/cost-controls.md)**.
 
 ---
 
@@ -253,20 +256,25 @@ up at the repo root.
 
 This is not a sketch. It was deployed in `eu-west-1` and taken all the way to
 a mounted `ReadWriteMany` PVC, with every number observed rather than assumed
-— and **re-verified end to end on WEKA 5.1.32.19 on 2026-09-29**, with three
-client nodes pinned to the backends' availability zone.
+— and **re-verified end to end on WEKA 5.1.32.19 three times**: twice on
+2026-09-29 and again on **2026-10-22**, three weeks later from a clean
+account, with three client nodes pinned to the backends' availability zone.
 
-Confirmed on that run: a healthy 6-backend cluster at `3+2 (fully protected)`;
-HugePages `7Gi` and `cpu 30/32` on every node; `weka.io/weka-nics: 4` after
-the policy; a `Bound` RWX PVC reporting `wekafs` with an enforced quota; three
-pods on three nodes appending to one file with **100 lines and 100 accounted
-for**; data read back after its node was cordoned out; and both PVs
-auto-deleted on teardown.
+Confirmed on every run: a healthy 6-backend cluster at `3+2 (fully
+protected)`; HugePages `7Gi` and `cpu 30/32` on every node;
+`weka.io/weka-nics: 4` after the policy; a `Bound` RWX PVC reporting `wekafs`
+with an enforced quota; three pods on three nodes appending to one file with
+every line accounted for; data read back after its node was cordoned out; and
+both PVs auto-deleted on teardown. Across three weeks nothing changed but
+timings.
 
-Two things that run counter to expectation are recorded there too — the
-negative case takes about **8 minutes** to appear rather than seconds, and a
-**PodDisruptionBudget over the client pods does not work at all**. The full
-table is in **[Verified end to end](docs/verified.md)**.
+Three things that run counter to expectation are recorded there too — the
+negative case takes about **8 minutes** to appear rather than seconds and
+**cannot be shown at all on a node group that has already run the NIC
+policy**; a **PodDisruptionBudget over the client pods does not work at all**;
+and the Secrets Manager names **carry a random suffix**, so they cannot be
+reconstructed by hand and never block a re-apply. The full table is in
+**[Verified end to end](docs/verified.md)**.
 
 ---
 

@@ -6,17 +6,22 @@ This is not a sketch. It was deployed in `eu-west-1` and taken all the way to a
 mounted `ReadWriteMany` PVC, and every number below was observed rather than
 assumed.
 
-> ### Re-verified on WEKA 5.1.32.19 — **twice**, 2026-09-29.
+> ### Re-verified on WEKA 5.1.32.19 — **three times**: twice 2026-09-29, again 2026-10-22.
 >
 > This table was previously a 4.4.37 run carrying a warning that 5.1 was
-> unmeasured. It has now been deployed from empty **twice** on the same day,
-> on **WEKA 5.1.32.19, operator v1.16.0, EKS 1.32**, with
+> unmeasured. It has now been deployed from empty **three times** on
+> **WEKA 5.1.32.19, operator v1.16.0, EKS 1.32**, with
 > `client_node_count = 3` and the node group pinned to the backends' AZ.
 >
-> The second run existed to test the repo's own fixes rather than the
-> product, and it followed `terraform output -raw next_steps` verbatim
-> instead of improvising. Every figure below reproduced. Where the two runs
-> differ the row says so — and the differences are all *timing*, never state.
+> Runs 1 and 2 were the same day; **run 3 was three weeks later, 2026-10-22**,
+> from a clean account and following the docs as written. Every figure below
+> reproduced on run 3 — no state differences across three weeks and three
+> deployments. Where runs differ the row says so, and the differences remain
+> *timing*, never state.
+>
+> Run 3 also corrected two things this page and its siblings had wrong, both
+> recorded in their own rows below: the **Secrets Manager naming**, and the
+> claim that a reserved secret name blocks a re-apply.
 >
 > What did **not** change from 4.4.37 either: the HugePages figure, the CPU
 > pinning, the `weka-nics` count, the quota enforcement and the PV
@@ -24,30 +29,35 @@ assumed.
 
 | Check | Observed (5.1.32.19) |
 |---|---|
-| WEKA cluster | `WekaIO v5.1.32.19` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (fully protected)` · hot spare 7.36 TiB · 36.82 TiB |
-| Clients joined | **`clients: 3 connected`** — read off the cluster on run 2 after the clients came up. `weka cluster container` showed all three `UP`, 4 cores and 6.36 GB each, release `5.1.32.19`, one per node. (On run 1 this figure was *not* read; the table briefly claimed it anyway, which was wrong and is the reason it is now quoted with its source.) |
+| WEKA cluster | `WekaIO v5.1.32.19` · `status: OK (12 backend containers UP, 12 drives UP)` · protection `3+2 (fully protected)` · hot spare 7.36 TiB · 36.82 TiB. Run 3 identical, read from the status Lambda: `status: OK`, `io_status: STARTED`, `stripe_data_drives: 3` + `stripe_protection_drives: 2`, hot spare 1, drives 12/12, io nodes 42/42, 40.49 TB raw |
+| Clients joined | **`clients: 3 connected`** — read off the cluster on run 2 after the clients came up. Run 3 confirmed it from the module's own status Lambda instead, which needs no WEKA credentials: `hosts.clients.active = 3`, `backends.active = 12`, `total_count = 15`. `weka cluster container` showed all three `UP`, 4 cores and 6.36 GB each, release `5.1.32.19`, one per node. (On run 1 this figure was *not* read; the table briefly claimed it anyway, which was wrong and is the reason it is now quoted with its source.) |
 | AZ placement | all 6 backends **and** all 3 clients in `eu-west-1a`; no cross-AZ storage path |
 | HugePages | node `hugepages-2Mi` allocatable `7Gi` on all three nodes |
 | CPU pinning | node `cpu` allocatable **30 of 32** on all three — `strict-cpu-reservation` doing its job |
 | maxPods | `29`, matching the CNI's addressable IPs with `MAX_ENI=1` |
 | Instance facts (EC2 API) | `m6i.8xlarge`: 32 vCPU, 16 cores, 2 threads/core, 8 ENIs, 30 IPv4/ENI — so 29 addressable pods and sibling index 16. All five `preflight.tf` preconditions passed at plan time |
-| Data NICs | `weka.io/weka-nics: 4` on all three nodes after the `ensure-nics` policy reached `Done`. **Timing depends on what the operator already knows**: 40 s on run 1, where the policy was applied *after* the client had been through discovery, but **180 s on run 2** applying it cold in the documented order. Expect three minutes, not forty seconds |
+| Data NICs | `weka.io/weka-nics: 4` on all three nodes after the `ensure-nics` policy reached `Done`. **Timing depends on what the operator already knows**: 40 s on run 1, where the policy was applied *after* the client had been through discovery, but **180 s on run 2** applying it cold in the documented order. Expect three minutes, not forty seconds. **Run 3 took ~7 minutes** — longest yet, and for a third reason again: the policy's `weka-dsc` pods were pulling the multi-GiB client image onto cold nodes. The variable is never the policy, it is what the node has already pulled |
 | Beat 2 (negative case) | **reproduces**, but later than expected: `0/3 nodes are available: 1 Insufficient weka.io/weka-nics`. ~8 min after applying `03`, because a discovery-mode pod pulls the image first. Policy applied → weka-nics on all 3 nodes at 40 s → 0 unschedulable at 50 s |
-| PVC | `Bound`, `RWX`, 1Gi on `weka-dir`; `df -hT` reports `default wekafs 10.0G` for the 10Gi demo claim |
+| PVC | `Bound`, `RWX`, 1Gi on `weka-dir`; `df -hT` reports `default wekafs 10.0G` for the 10Gi demo claim. Run 3: the smoke-test PVC bound in **under 16 s** and the pod completed ~30 s later, `default wekafs 1.0G` inside |
 | Quota | the mount reports the PVC's size, not the cluster's — `capacityEnforcement: HARD` applying a real quota |
-| RWX multi-writer | 3 replicas, one per node. Single snapshot, run 1: **100 lines, 100 summed across 3 hostnames, 0 malformed**. Run 2: **85 / 85 / 3 / 0**. Concurrent `O_APPEND` with no lost or torn writes, twice |
+| RWX multi-writer | 3 replicas, one per node. Single snapshot, run 1: **100 lines, 100 summed across 3 hostnames, 0 malformed**. Run 2: **85 / 85 / 3 / 0**. Run 3: **38 lines, 13 / 13 / 12 across 3 hostnames, 0 malformed**. Concurrent `O_APPEND` with no lost or torn writes, three times |
 | Persistence across node loss | sentinel written on one node, pod deleted, node cordoned, pod rescheduled elsewhere, sentinel read back intact |
 | fio job | ran to completion: `fio-3.39` from Alpine community, all three stanzas as separate run groups, 0 ENOSPC inside the quota. **No figures recorded here — see the Fact Note requirement** |
 | PodDisruptionBudget | **does not work for the client pods.** `disruptionsAllowed: 0` permanently, `wekacontainers.weka.weka.io does not implement the scale subresource`; every eviction refused. The node group's own `maxUnavailablePercentage: 33` already paces rolls |
 | Teardown: PVs | both PVs auto-deleted on PVC delete, i.e. the CSI plugin removed the backing WEKA directories |
-| Teardown: first pass | fails on `InvalidPlacementGroup.InUse`, both runs. **22m43s** and **22m52s** — nine seconds apart, so treat ~23 minutes as the figure. 168 of 173 resources; the shared security group alone took 14m10s. Exit code **1**, which a `\| tail` pipeline will hide from you |
-| Teardown: second pass | **~40s** / **15s**, the remaining 5 (placement group, VPC, two subnets, `time_static`), exit 0, state empty. Both runs |
+| Teardown: first pass | fails on `InvalidPlacementGroup.InUse`, **all three runs**. **22m43s**, **22m52s**, **22m33s** — a 19-second spread across three weeks, so ~23 minutes is a solid figure. Resources destroyed: 168 of 173 on runs 1–2, 145 of 150 on run 3 (a smaller plan, same 5 left behind). The **slowest single resource is not stable**: the shared security group at 14m10s on run 1, the EKS node group at **8m21s** on run 3. Exit code **1**, which a `\| tail` pipeline will hide from you |
+| Teardown: second pass | **~40s** / **15s** / **14s**, the remaining 5 (placement group, VPC, two subnets, `time_static`), exit 0, state empty. All three runs, identical leftover set |
 | Budget alerts | **work, with no confirmation step.** No confirmation email is sent for an `EMAIL` subscriber and none is needed. Proven with a throwaway $0.01 daily budget against $31.81 of spend: `NotificationState` went to `ALARM` on creation and the mail arrived from `no-reply@budgets.alerts.amazonaws.com`. The real budget stayed at `OK` through both runs because $31.81 never neared $600/day — quiet because nothing was wrong |
 | Teardown: budget | destroyed with the stack on both runs — `describe-budgets` returns nothing afterwards. So it cannot warn you about a teardown that failed |
-| Teardown: orphans | none billing. Instances `terminated`, volumes and ENIs gone, NAT gateway `deleted`, budget destroyed with the stack. 8 KMS keys left `PendingDeletion` (normal). 4 secrets left scheduled for deletion — **their values stay restorable and readable for the whole 30-day window**, so they were purged by hand afterwards; see the two rows below |
+| Teardown: orphans | none billing. Instances `terminated`, volumes and ENIs gone, NAT gateway `deleted`, budget destroyed with the stack. 8 KMS keys left `PendingDeletion` (normal). 4 secrets left scheduled for deletion — **their values stay restorable and readable for the whole 30-day window**, so they were purged by hand afterwards; see the two rows below. **Run 3 found that purge had not fully taken**: four 2026-09-29 secrets were still sitting in their deletion window 23 days later, which is exactly the intermittent-force-delete behaviour two rows down, caught in the wild |
 | Teardown: tag sweep | the Resource Groups Tagging API still listed **90 resources** tagged `Project=weka-eks-demo` with state empty and everything gone — all of them terminated or pending deletion. Do not trust it as an orphan check |
 | Teardown: purging a secret | `delete-secret --force-delete-without-recovery` against an already-scheduled secret is **intermittent**. Run 1: 3 of 4 survived it, returning success while only re-stamping `DeletedDate`; the 4th deleted. Run 2: the one tested deleted on the first call. So it works often enough to look reliable and fails often enough to leave a name reserved — always use `restore-secret` then force-delete, and confirm with `describe-secret` |
 | Teardown: `list-secrets` lag | reported **4 secrets remaining when 3 were already gone**. `describe-secret` returning `ResourceNotFoundException` is the only reliable confirmation — the same "trust the service API, not the aggregate view" lesson as the tag sweep above |
+| Secrets Manager naming | **The names cannot be constructed by hand.** Two traps, both measured on run 3: the middle path segment is `<prefix>-<cluster_name>` (the prefix appears **twice** — `weka/weka-poc/…`, not `weka/poc/…`), and every name carries a **random 4-character suffix** from `random_password.suffix` in the module's `secrets.tf`. A hand-built id returns `ResourceNotFoundException` — *the same answer a genuinely deleted secret gives* — so it reports "all clear" regardless of reality. This page's own preflight fell for it. Get the id from `terraform output -raw weka_password_secret_id`, or list by substring |
+| Secret names do **not** block a re-apply | The docs claimed the 30-day reservation meant you could not re-apply under the same `prefix`/`cluster_name` inside the window. **False, and disproved directly on run 3**: four secrets from the 2026-09-29 teardown were still in their deletion window when run 3 applied under the *same* prefix and cluster name, created its own set with a different suffix, and succeeded. Both sets coexisted in the account. The random suffix makes collisions impossible, so purge for tidiness, not necessity |
+| Beat 2 needs a **recycled** node group | The negative case cannot be shown on a node group that has already run the NIC policy. The data-path ENIs are released only when the node **terminates**, not when the `WekaPolicy` is deleted, so the nodes keep advertising `weka.io/weka-nics` and the client schedules immediately. Run 3 hit this: `demo.sh` correctly detected it, then waited the full 900 s anyway and asserted the beat had proved its point. Both defects fixed — the wait is now skipped and the summary reports `NOT DEMONSTRATED` |
+| Account-level `AutoStop` | Not this repo's doing, and worth checking before you deploy anywhere shared. The account used for run 3 runs an `AutoTag` Lambda (every 15 min) that stamps `AllowStop=6` on any instance lacking `AllowStop`/`PreventStop`, and an `AutoStop` Lambda (every 10 min) that stops anything past that deadline. All 9 instances were tagged within 15 minutes of launch. **Tighter than `ttl_hours = 8`**, and because the backends are `i3en` instance-store, a stop is **data loss, not a pause**. See [Cost controls](cost-controls.md) |
+| Cluster alerts | **Open — not explained.** `active_alerts_count` was **2** on a freshly formed cluster and **5** once the three clients joined. Nothing misbehaved: `status: OK`, `io_status: STARTED`, the PVC mounted and the data round-tripped. The alert *text* was never read on run 3, so what the five are is unknown. Recorded as a gap rather than guessed at |
 
 Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 (first attempt clean — no `InsufficientRolePermissions` race this time),
@@ -55,6 +65,16 @@ Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 register, and **~5 min** for the multi-GiB `weka-in-container` pull on a cold
 node. From `apply` to a mounted RWX PVC: about **50 minutes**, most of it
 waiting on image pulls and the client join.
+
+Run 3 (2026-10-22) matched that shape. **150 resources, first attempt clean
+again** — two clean cold applies in a row, so the `InsufficientRolePermissions`
+race is worth keeping documented but is clearly not the common case. The
+longest single resource was the EKS control plane at **7m53s**. Clusterization
+finished **9m47s after the backends launched** (12:17:05 → 12:26:52 UTC),
+comfortably inside the 15–25 minutes this repo tells you to allow — that
+window is conservative, not typical. The slow parts were, again, entirely
+image pulls: ~7 minutes for the NIC policy's pods and ~12 minutes for the
+client containers to come back during the demo.
 
 That is faster than the hour the 4.4.37 run suggested, but budget the hour
 anyway — the pull dominates and it comes over a single NAT gateway.

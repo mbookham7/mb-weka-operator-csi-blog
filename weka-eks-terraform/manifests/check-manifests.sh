@@ -78,6 +78,12 @@ fi
 get() { printf '%s' "$vals" | python3 -c "import json,sys; print(json.load(sys.stdin).get(sys.argv[1],''))" "$1"; }
 
 fail=0
+# Per-category flags so the failure footer can list only the remedies that
+# actually apply. A footer that prints advice for categories that did not
+# occur reads as noise, and on a run where every prerequisite passed it is
+# simply wrong.
+missing=0
+drift=0
 NS_CHECK="weka-operator-system"
 
 # --- what does the REPOSITORY say, as opposed to the working tree? -------
@@ -124,6 +130,7 @@ check() { # check <label> <expected> <actual>
   if [ "$2" = "$3" ]; then
     printf '  OK    %-44s %s\n' "$1" "$3"
   else
+    drift=1
     printf '  DRIFT %-44s manifest=%s  terraform=%s\n' "$1" "$3" "$2"
     fail=1
   fi
@@ -212,13 +219,13 @@ elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
   if kubectl get namespace weka-operator-system >/dev/null 2>&1; then
     printf '  OK    %-44s exists\n' "namespace weka-operator-system"
   else
-    printf '  MISSING %-42s run ./00-namespace-and-secrets.sh first\n' "namespace weka-operator-system"; fail=1
+    printf '  MISSING %-42s run ./00-namespace-and-secrets.sh first\n' "namespace weka-operator-system"; fail=1; missing=1
   fi
   for crd in wekaclients.weka.weka.io wekapolicies.weka.weka.io; do
     if kubectl get crd "$crd" >/dev/null 2>&1; then
       printf '  OK    %-44s installed\n' "crd $crd"
     else
-      printf '  MISSING %-42s run ./00-namespace-and-secrets.sh first\n' "crd $crd"; fail=1
+      printf '  MISSING %-42s run ./00-namespace-and-secrets.sh first\n' "crd $crd"; fail=1; missing=1
     fi
   done
 else
@@ -243,7 +250,7 @@ if [ -n "$cn" ] && [ -n "$dn" ]; then
   if [ "$dn" -ge "$cn" ]; then
     printf '  OK    %-44s dataNICsNumber(%s) >= coresNum(%s)\n' "02/03 NIC-per-core rule" "$dn" "$cn"
   else
-    printf '  DRIFT %-44s dataNICsNumber(%s) < coresNum(%s) -- client will stay Pending\n' "02/03 NIC-per-core rule" "$dn" "$cn"; fail=1
+    printf '  DRIFT %-44s dataNICsNumber(%s) < coresNum(%s) -- client will stay Pending\n' "02/03 NIC-per-core rule" "$dn" "$cn"; fail=1; drift=1
   fi
 fi
 
@@ -284,13 +291,13 @@ if [ "$OFFLINE" -eq 1 ]; then
   if [ "$n" = "1" ]; then
     printf '  OK    %-44s %s\n' "weka image tags agree across manifests" "$swept"
   else
-    printf '  DRIFT %-44s %s\n' "weka image tags disagree" "$(printf '%s' "$swept" | tr '\n' ' ')"; fail=1
+    printf '  DRIFT %-44s %s\n' "weka image tags disagree" "$(printf '%s' "$swept" | tr '\n' ' ')"; fail=1; drift=1
   fi
 elif [ -n "$want_image" ]; then
   found_images=$(grep -hoE 'quay\.io/weka\.io/weka-in-container:[A-Za-z0-9._-]+' ./*.yaml 2>/dev/null | sort -u)
   bad=0
   for img in $found_images; do
-    [ "$img" = "$want_image" ] || { printf '  DRIFT %-44s %s  terraform=%s\n' "weka image tag sweep" "$img" "$want_image"; bad=1; fail=1; }
+    [ "$img" = "$want_image" ] || { printf '  DRIFT %-44s %s  terraform=%s\n' "weka image tag sweep" "$img" "$want_image"; bad=1; fail=1; drift=1; }
   done
   [ "$bad" -eq 0 ] && printf '  OK    %-44s %s\n' "weka image tag sweep (all *.yaml)" "$want_image"
 fi
@@ -307,10 +314,10 @@ bb_count=$(printf '%s\n' "$bb" | sed '/^$/d' | wc -l | tr -d ' ')
 if [ "$bb_count" = "1" ]; then
   printf '  OK    %-44s %s\n' "busybox tag consistent (06/07/08)" "$bb"
 else
-  printf '  DRIFT %-44s %s\n' "busybox tags disagree" "$(printf '%s' "$bb" | tr '\n' ' ')"; fail=1
+  printf '  DRIFT %-44s %s\n' "busybox tags disagree" "$(printf '%s' "$bb" | tr '\n' ' ')"; fail=1; drift=1
 fi
 if printf '%s' "$bb" | grep -q ':latest'; then
-  printf '  DRIFT %-44s pin a version\n' "busybox pinned to :latest"; fail=1
+  printf '  DRIFT %-44s pin a version\n' "busybox pinned to :latest"; fail=1; drift=1
 fi
 
 # --- the fio file must fit inside the PVC quota ---------------------------
@@ -326,7 +333,7 @@ if [ -n "$pvc_b" ] && [ -n "$fio_b" ] && [ "$pvc_b" -gt 0 ] 2>/dev/null; then
   if [ "$fio_b" -lt "$pvc_b" ]; then
     printf '  OK    %-44s fio size=%s inside PVC %s\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"
   else
-    printf '  DRIFT %-44s fio size=%s >= PVC %s -- ENOSPC mid-run\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"; fail=1
+    printf '  DRIFT %-44s fio size=%s >= PVC %s -- ENOSPC mid-run\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"; fail=1; drift=1
   fi
 else
   printf '  NOTE  %-44s could not parse (fio=%s pvc=%s)\n' "09 fio size vs 07 PVC quota" "$fio_size" "$pvc_req"
@@ -386,7 +393,7 @@ for f in 08-persistence-check.sh demo.sh check-manifests.sh 00-namespace-and-sec
   if [ -x "$f" ]; then
     printf '  OK    %-44s executable\n' "$f"
   else
-    printf '  DRIFT %-44s not executable -- chmod +x %s\n' "$f" "$f"; fail=1
+    printf '  DRIFT %-44s not executable -- chmod +x %s\n' "$f" "$f"; fail=1; drift=1
   fi
 done
 
@@ -429,7 +436,7 @@ elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
   if [ "$nodes" -ge 2 ]; then
     printf '  OK    %-44s %s schedulable client nodes\n' "08 needs >= 2 nodes" "$nodes"
   else
-    printf '  DRIFT %-44s only %s -- 08 cannot reschedule after the cordon\n' "08 needs >= 2 nodes" "$nodes"; fail=1
+    printf '  DRIFT %-44s only %s -- 08 cannot reschedule after the cordon\n' "08 needs >= 2 nodes" "$nodes"; fail=1; drift=1
   fi
 else
   printf '  NOTE  %-44s skipping (kubectl not reachable)\n' "07/08 node-count checks"
@@ -494,7 +501,7 @@ for f in 01-weka-client-secret.yaml 04-csi-api-secret.yaml; do
     fi
   elif [ -f "$f" ]; then
     if grep -qE 'UkVQTEFDRV9XSVRI|UkVQTEFDRV9NRQ==' "$f"; then
-      printf '  DRIFT %-44s still contains REPLACE_ME placeholders\n' "$f"; fail=1
+      printf '  DRIFT %-44s still contains REPLACE_ME placeholders\n' "$f"; fail=1; drift=1
     else
       printf '  OK    %-44s filled in\n' "$f"
     fi
@@ -522,8 +529,11 @@ else
   else
     echo "CHECKS FAILED. Fix these before applying, or you will spend the next"
     echo "20 minutes debugging a Pending pod instead:"
-    echo "  - MISSING prerequisite -> run ./00-namespace-and-secrets.sh first"
-    echo "  - DRIFT on a value     -> 'terraform output manifest_values' is authoritative"
+    [ "$missing" -eq 1 ] && \
+      echo "  - MISSING prerequisite -> run ./00-namespace-and-secrets.sh first"
+    [ "$drift" -eq 1 ] && \
+      echo "  - DRIFT on a value     -> 'terraform output manifest_values' is authoritative"
+    true
   fi
 fi
 exit "$fail"

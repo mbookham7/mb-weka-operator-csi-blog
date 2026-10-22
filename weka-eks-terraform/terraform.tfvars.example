@@ -24,10 +24,15 @@ region = "eu-west-1"
 # Leave commented to take the first two available AZs in the region.
 # availability_zones = ["eu-west-1a", "eu-west-1b"]
 
-# prefix + cluster_name must be unique per region: the WEKA module derives
-# Secrets Manager names from them, and Secrets Manager keeps a deleted name
-# reserved for up to 30 days. Re-running a destroyed deployment under the same
-# name inside that window fails.
+# prefix + cluster_name name almost everything the module builds, so keep them
+# distinct from any other deployment in the same region.
+#
+# They do NOT have to be unique across *destroyed* deployments. This file used
+# to claim that Secrets Manager's 30-day name reservation blocked a re-apply
+# under the same names; it does not, because the module appends a random
+# 4-character suffix to every secret it creates. Verified 2026-10-22: secrets
+# from a 2026-09-29 teardown were still in their deletion window while a fresh
+# apply under the same prefix/cluster_name succeeded beside them.
 prefix       = "weka"
 cluster_name = "poc"
 

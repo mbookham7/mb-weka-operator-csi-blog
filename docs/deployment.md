@@ -177,10 +177,34 @@ weka cluster join-token generate --access-token-timeout 52w
 >
 > | Username | Password secret | |
 > |---|---|---|
-> | `admin` | `<prefix>/<cluster>/weka-password` | works |
-> | `weka-deployment` | `<prefix>/<cluster>/weka-deployment-password` | works |
+> | `admin` | `<prefix>/<prefix>-<cluster_name>/weka-password-<suffix>` | works |
+> | `weka-deployment` | `<prefix>/<prefix>-<cluster_name>/weka-deployment-password-<suffix>` | works |
 > | `admin` | `weka-deployment-password` | **fails** |
 > | `weka-deployment` | `weka-password` | **fails** |
+>
+> **You cannot construct these names by hand, and should not try.** Two things
+> make the obvious guess wrong, and both were measured on 2026-10-22:
+>
+> 1. **The prefix appears twice.** The middle segment is
+>    `<prefix>-<cluster_name>`, not `<cluster_name>` — so `weka/weka-poc/…`,
+>    not `weka/poc/…`.
+> 2. **Every name carries a random 4-character suffix.** The module generates
+>    it per deployment (`random_password.suffix` in the module's `secrets.tf`)
+>    and appends it to all five secrets, so the same `prefix`/`cluster_name`
+>    produces different names on every apply — `weka-password-OBm9` on one run,
+>    `weka-password-s7gV` on the next.
+>
+> The failure mode is nasty because it is silent and inverted:
+> `describe-secret` on a hand-built name returns `ResourceNotFoundException`,
+> which is **the same answer a genuinely-deleted secret gives**. A reconstructed
+> id therefore reports "all clear" whether or not anything is actually there.
+> Always get the real id from Terraform, or list by substring:
+>
+> ```bash
+> terraform output -raw weka_password_secret_id
+> aws secretsmanager list-secrets --include-planned-deletion \
+>   --query "SecretList[?contains(Name,'<prefix>-<cluster_name>')].[Name,DeletedDate]" --output text
+> ```
 >
 > The `weka-username` secret contains `weka-deployment`, **not** `admin`. So
 > combining it with the adjacent `weka-password` secret — the obvious reading
@@ -463,8 +487,19 @@ then have to strip by hand.
 >   WekaPolicy**, only when the node terminates, so do not wait for them to
 >   disappear before running `destroy`
 > - **Secrets Manager** — entries are *scheduled* for deletion, not deleted.
->   They keep the name reserved for up to 30 days, so a re-apply under the
->   same `prefix`/`cluster_name` will fail. To get the name back now you need
+>   They keep the name reserved for up to 30 days.
+>
+>   **This does NOT block a re-apply, contrary to what this page said until
+>   2026-10-22.** The module appends a random 4-character suffix to every
+>   secret name, so a fresh apply generates fresh names and cannot collide
+>   with a reserved one. Measured directly: a teardown on 2026-09-29 left four
+>   secrets suffixed `-OBm9` sitting in their deletion window, and a full
+>   apply on 2026-10-22 under the *same* `prefix` and `cluster_name` created
+>   `-s7gV` alongside them and succeeded. Both sets coexisted.
+>
+>   So purge them for tidiness, not because anything depends on it. The one
+>   real consequence of skipping it is clutter: each teardown leaves five more
+>   entries loitering for 30 days. To get a name back immediately you need
 >   the **two-call** form. `--force-delete-without-recovery` on its own is
 >   unreliable against a secret already in a deletion window: across two
 >   teardowns it sometimes deleted and sometimes returned success while only
@@ -518,12 +553,19 @@ then have to strip by hand.
 > **Re-verified on 5.1.32.19, 2026-09-29.** The behaviour below is not
 > folklore — it reproduced exactly. Measured on that run:
 >
-> | | |
-> |---|---|
-> | first pass | **22m43s**, 168 of 173 resources destroyed, then failed |
-> | left behind | 5 — the placement group, the VPC, two subnets, and `time_static` |
-> | second pass | **~40 seconds**, all 5 gone, exit 0 |
-> | slowest single resource | the shared security group, **14m10s** — it is referenced by the backends, the EKS nodes *and* the Secrets Manager endpoint, so it cannot go until all of them have |
+> | | 2026-09-29 | 2026-10-22 |
+> |---|---|---|
+> | first pass | **22m43s**, 168 of 173 destroyed, then failed | **22m33s**, 145 of 150 destroyed, then failed |
+> | left behind | 5 — placement group, VPC, two subnets, `time_static` | the same 5 |
+> | second pass | **~40 seconds**, all 5 gone, exit 0 | **14 seconds**, all 5 gone, exit 0 |
+> | slowest single resource | the shared security group, **14m10s** | the EKS node group, **8m21s** |
+>
+> Two runs, three weeks apart: the overall shape is stable to within ten
+> seconds on a 22-minute operation, and the five leftovers are identical. What
+> is *not* stable is which resource dominates — the security group took 14m10s
+> on the first run and the EKS node group 8m21s on the second. Treat the total
+> and the leftover set as reproducible; treat the per-resource ranking as
+> incidental to whatever else was still draining at the time.
 >
 > **Expect exactly this on the first `destroy`:**
 >

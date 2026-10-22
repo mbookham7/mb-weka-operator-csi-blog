@@ -147,8 +147,49 @@ That one is not a tripwire, it is simply absent. See
 ## What neither of them does
 
 **Neither stops anything.** No Lambda reaps a tagged resource; no budget
-throttles an account. They are a label and a tripwire. The only real control
-is `terraform destroy` — see [Teardown](deployment.md#teardown).
+throttles an account. They are a label and a tripwire. Nothing *this repo
+creates* will stop the deployment — `terraform destroy` is the only control it
+ships. See [Teardown](deployment.md#teardown).
+
+### But the account you deploy into might stop it for you
+
+That statement is about this repo, not about your AWS account, and the
+difference cost us a near miss on 2026-10-22. The account used for that run
+carries two account-level Lambdas that this repo knows nothing about:
+
+| Lambda | Schedule | What it does |
+|---|---|---|
+| `AutoTag` | every 15 min | Stamps `AllowStop=<n>` on any instance carrying neither `AllowStop` nor `PreventStop`. `n` came from its own env var — **6** on that account |
+| `AutoStop` | every 10 min | Clears stop protection and calls `StopInstances` on anything past its `AllowStop` deadline. `AllowStop=0` means a 10-minute threshold, not "never" |
+
+This repo sets **neither tag**, so every backend and every EKS node was
+tagged `AllowStop=6` within 15 minutes of launch.
+
+Three consequences worth internalising:
+
+- **It is tighter than `ttl_hours`.** The default `ttl_hours = 8` produced an
+  `ExpiresAt` two hours *later* than the stop would actually land. Planning
+  against the tag would have lost the cluster.
+- **A stop is data loss, not a pause.** The backends are `i3en`, whose storage
+  is instance-store NVMe. Stopping them discards the drives, so a stopped
+  WEKA cluster is a destroyed one — and the autoscaling group is liable to
+  start replacing what it sees as unhealthy instances.
+- **You get ~60 minutes of warning, over SSM `wall`**, which nobody watching
+  a terminal on their workstation will ever see.
+
+Check before you deploy, not after:
+
+```bash
+aws lambda list-functions --query 'Functions[].FunctionName' --output text
+aws events list-rules --query 'Rules[].[Name,ScheduleExpression,State]' --output text
+```
+
+`AutoTag` skips any instance already tagged `PreventStop`, so adding
+`PreventStop = "true"` to the `tags` map in `terraform.tfvars` opts the whole
+deployment out. That is a supported path in the Lambda's own code rather than
+a workaround — but it also removes the only automatic brake on a
+$20–25/hour deployment, so prefer leaving it on unless a run genuinely needs
+to outlive the window.
 
 ## What happens to these on teardown
 

@@ -279,14 +279,24 @@ run "kubectl delete -f 02-weka-nics-policy.yaml --ignore-not-found"
 
 run "kubectl get nodes -l '$NODE_LABEL' -o json | jq -r '.items[] | \"\\(.metadata.name)  weka-nics=\\(.status.allocatable[\"weka.io/weka-nics\"] // \"<absent>\")\"'"
 
+# Whether beat 2 actually demonstrated its point. The summary at the end
+# reports this honestly rather than asserting it unconditionally: a beat that
+# could not run has not proved anything, and saying otherwise on camera is the
+# exact failure this script exists to avoid.
+BEAT2_DEMONSTRATED=1
+
 if kubectl get nodes -l "$NODE_LABEL" -o json \
    | jq -e '[.items[] | select(.status.allocatable["weka.io/weka-nics"] != null)] | length > 0' >/dev/null 2>&1; then
+  BEAT2_DEMONSTRATED=0
   printf '\n'
   printf '  NOTE: a node still advertises weka.io/weka-nics, left over from a\n'
   printf '  previous run -- the ENIs are released only when the node terminates,\n'
   printf '  not when the WekaPolicy is deleted. The client below will schedule\n'
   printf '  immediately and there will be no Pending pod to show.\n'
-  printf '  Recycle the node group for a clean take. Carrying on.\n'
+  printf '  Recycle the node group for a clean take.\n'
+  printf '\n'
+  printf '  Beat 2 cannot run from this state, so the wait below is SKIPPED\n'
+  printf '  rather than spending %%ss waiting for a refusal that cannot come.\n' "$PENDING_TIMEOUT"
 fi
 
 pause "apply the WekaClient with no NIC policy"
@@ -299,8 +309,10 @@ has to pull the multi-GiB client image. Only when that finishes does it
 create the real client pod -- and that is the one the scheduler refuses.
 Measured at around 8 minutes on a cold node."
 
+if [ "$BEAT2_DEMONSTRATED" -eq 1 ]; then
 printf '\n  waiting up to %ss for the scheduler to refuse the client pod...\n' "$PENDING_TIMEOUT"
 waited=0
+saw_unschedulable=0
 while [ "$waited" -lt "$PENDING_TIMEOUT" ]; do
   # UNSCHEDULABLE, not merely status.phase=Pending.
   #
@@ -316,25 +328,46 @@ while [ "$waited" -lt "$PENDING_TIMEOUT" ]; do
      | jq -e '[.items[] | select(.status.conditions[]?
                 | select(.type == "PodScheduled" and .status == "False"))] | length > 0' \
        >/dev/null 2>&1; then
+    saw_unschedulable=1
     break
   fi
   sleep 5
   waited=$((waited + 5))
 done
 
-run "kubectl -n '$NS' get pods -o wide"
+  # Timing out here is not success. Without this the beat would fall through
+  # to the summary and claim a refusal that never happened.
+  if [ "$saw_unschedulable" -eq 0 ]; then
+    BEAT2_DEMONSTRATED=0
+    printf '\n  TIMED OUT after %ss: no pod was ever refused by the scheduler.\n' "$PENDING_TIMEOUT"
+    printf '  Beat 2 did NOT demonstrate its point on this run.\n'
+  fi
+fi
 
-explain "And the reason, straight from the scheduler. THIS is the line to read
+# The narration below describes a refusal. Only show it if there was one --
+# otherwise the script reads out a scheduler message that does not exist.
+if [ "$BEAT2_DEMONSTRATED" -eq 1 ]; then
+  run "kubectl -n '$NS' get pods -o wide"
+
+  explain "And the reason, straight from the scheduler. THIS is the line to read
 out loud:"
 
-run "kubectl -n '$NS' get pods -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type==\"PodScheduled\" and .status==\"False\")) | \"\(.metadata.name): \(.status.conditions[] | select(.type==\"PodScheduled\") | .message)\"'"
-run "kubectl -n '$NS' get events --field-selector reason=FailedScheduling --sort-by=.lastTimestamp | tail -5"
+  run "kubectl -n '$NS' get pods -o json | jq -r '.items[] | select(.status.conditions[]? | select(.type==\"PodScheduled\" and .status==\"False\")) | \"\(.metadata.name): \(.status.conditions[] | select(.type==\"PodScheduled\") | .message)\"'"
+  run "kubectl -n '$NS' get events --field-selector reason=FailedScheduling --sort-by=.lastTimestamp | tail -5"
 
-explain "A perfectly healthy WEKA cluster. A perfectly healthy node. A pod that
+  explain "A perfectly healthy WEKA cluster. A perfectly healthy node. A pod that
 will sit there forever, because the resource it is asking for is created by a
 custom resource nobody applied.
 
 Now apply the policy -- and change nothing else."
+else
+  explain "Beat 2 is being skipped: the nodes still advertise weka.io/weka-nics
+from an earlier run, so there is no refusal to show. Applying the policy and
+carrying straight on to beat 3.
+
+To see this beat properly, recycle the node group first -- the data-path ENIs
+are released when the node terminates, not when the WekaPolicy is deleted."
+fi
 
 pause "apply the NIC policy and watch it schedule"
 
@@ -467,9 +500,26 @@ cat <<'EOT'
     1  The node prep in Terraform's user data is real and readable off the
        live node -- HugePages reserved at first boot, CPU 0 and its sibling
        pinned out of the shared pool.
+EOT
+
+# Beat 2 is reported on what actually happened, not on what it intended to
+# show. A beat that could not run proves nothing.
+if [ "$BEAT2_DEMONSTRATED" -eq 1 ]; then
+  cat <<'EOT'
     2  A DPDK data path needs dedicated NICs that only the ensure-nics
        WekaPolicy can attach, and without it the client is unschedulable
        against a cluster and a node that are both perfectly healthy.
+EOT
+else
+  cat <<'EOT'
+    2  NOT DEMONSTRATED on this run. The nodes still advertised
+       weka.io/weka-nics from an earlier run, so the client scheduled
+       immediately and no pod was ever refused. Nothing here was proved
+       either way -- recycle the node group and re-run for the real thing.
+EOT
+fi
+
+cat <<'EOT'
     3  The CSI plugin provisions a directory inside an existing WEKA
        filesystem and the quota on it is enforced, not advisory.
     4  Three pods on three nodes append to one file concurrently, correctly.
