@@ -87,4 +87,31 @@ minutes at the end.
 
 ---
 
+# Run these first on the next deployment
+
+Everything in the table above was observed. The items below were **not**, and
+they are listed here so the next run does not have to rediscover which parts
+of the repo are still taking a claim on trust.
+
+They share one property: each needs a **live cluster**, so each is cheap while
+one is up and impossible once it is gone. Do them early, before the demo and
+well before teardown — the cost clock is the reason they got skipped last
+time.
+
+| Run this | Why it is still open |
+|---|---|
+| `weka alerts`, on a backend, right after the clients join | `active_alerts_count` was **2** on a freshly formed cluster and **5** once the three clients joined. Nothing misbehaved — `status: OK`, `io_status: STARTED`, the PVC mounted and the data round-tripped — but the alert *text* was never read, so what the five are is unknown. One command settles it |
+| `./demo.sh` beat 2, on a **recycled** node group | The 2026-10-22 fixes to beat 2 — skipping the wait when the beat cannot run, treating a timed-out wait as a failure rather than a pass, and printing `NOT DEMONSTRATED` — have only been syntax-checked. The paths that matter have never executed. A node group that has never had the NIC policy applied is the only state that exercises them |
+| `./fill-secrets.sh`, for real | Its *failure* path is verified (empty state exits 1 with a clear message). Its success path — reading the secret, prompting for the token, writing both files — has never run as committed. The version used on 2026-10-22 was an earlier one with a hardcoded ARN |
+| `./check-manifests.sh` **without** `--offline`, with something genuinely missing | The script has two failure footers. The offline one is verified both ways; the live one is not, because it needs Terraform state *and* a real missing prerequisite at the same time. Deleting the operator namespace before re-running it would do it |
+
+The lesson behind this list, recorded because it is the kind of thing this
+page exists for: on 2026-10-22 four changes were committed on a `bash -n`
+syntax check and called done. Two of them had real bugs — `terraform output
+-raw` exiting 0 with no outputs, and a second failure footer nobody had
+looked at — and both surfaced within minutes of actually being run. A syntax
+check is not a test, and this repo's whole premise is not claiming otherwise.
+
+---
+
 *[← back to the README](../README.md)*
