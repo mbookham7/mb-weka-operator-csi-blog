@@ -84,6 +84,8 @@ fail=0
 # simply wrong.
 missing=0
 drift=0
+fail03=0
+failcreds=0
 NS_CHECK="weka-operator-system"
 
 # --- what does the REPOSITORY say, as opposed to the working tree? -------
@@ -461,6 +463,7 @@ if [ "$OFFLINE" -eq 1 ]; then
   if committed_content 03-weka-client.yaml | grep -q 'REPLACE'; then
     printf '  OK    %-44s committed copy still has placeholders\n' "03-weka-client.yaml"
   else
+    fail03=1
     printf '  FAIL  %-44s committed copy has NO placeholders -- real backend IPs in git?\n' "03-weka-client.yaml"
     printf '        %s\n' "edit joinIpPorts locally; do not commit the edit"
     fail=1
@@ -492,6 +495,7 @@ for f in 01-weka-client-secret.yaml 04-csi-api-secret.yaml; do
     # TRACKED, not merely present. Having these on disk is normal and correct;
     # having them in git means a WEKA admin password is in a public repo.
     if is_tracked "$f"; then
+      failcreds=1
       printf '  FAIL  %-44s TRACKED IN GIT -- credentials committed\n' "$f"
       printf '        %s\n' "this file is gitignored, so it took a force-add. Rotate the WEKA admin"
       printf '        %s\n' "password and the join token, then purge it from history."
@@ -522,10 +526,15 @@ if [ "$fail" -eq 0 ]; then
 else
   if [ "$OFFLINE" -eq 1 ]; then
     echo "CHECKS FAILED. The repository is not internally consistent:"
-    echo "  - DRIFT on a value -> two files that must agree do not"
-    echo "  - FAIL on 03       -> real backend IPs look committed; restore the placeholders"
-    echo "  - FAIL on 01 / 04  -> a gitignored credential file is in the checkout. Rotate"
-    echo "                        the WEKA admin password and join token, then purge it."
+    [ "$drift" -eq 1 ] && \
+      echo "  - DRIFT on a value -> two files that must agree do not"
+    [ "$fail03" -eq 1 ] && \
+      echo "  - FAIL on 03       -> real backend IPs look committed; restore the placeholders"
+    if [ "$failcreds" -eq 1 ]; then
+      echo "  - FAIL on 01 / 04  -> a gitignored credential file is in the checkout. Rotate"
+      echo "                        the WEKA admin password and join token, then purge it."
+    fi
+    true
   else
     echo "CHECKS FAILED. Fix these before applying, or you will spend the next"
     echo "20 minutes debugging a Pending pod instead:"

@@ -32,13 +32,28 @@ cd "$(dirname "$0")"
 command -v aws >/dev/null || { echo "FAILED: aws CLI not found"; exit 1; }
 
 echo "==> Resolving the password secret id from Terraform"
-SECRET_ARN=$(terraform -chdir=.. output -raw weka_password_secret_id 2>/dev/null) || {
-  echo "FAILED: could not read 'terraform output -raw weka_password_secret_id'."
-  echo "        Run this from manifests/ with Terraform state present."
-  exit 1
-}
-REGION=$(terraform -chdir=.. output -raw region 2>/dev/null || echo "")
-[ -n "$REGION" ] && REGION_ARG=(--region "$REGION") || REGION_ARG=()
+# `terraform output -raw <name>` EXITS 0 when the state has no outputs at all,
+# and prints its "No outputs found" warning on stdout -- so neither the exit
+# code nor emptiness is a reliable guard. Without validating the shape, that
+# warning text ends up as the --secret-id and --region, and the script dies
+# with "Provided region_name '... Warning: No outputs found ...' doesn't match
+# a supported format" instead of saying what is actually wrong.
+SECRET_ARN=$(terraform -chdir=.. output -raw weka_password_secret_id 2>/dev/null || true)
+case "$SECRET_ARN" in
+  arn:aws:secretsmanager:*) ;;
+  *)
+    echo "FAILED: no usable weka_password_secret_id from Terraform."
+    echo "        Run this from manifests/ with the deployment applied."
+    echo "        ('terraform output -raw weka_password_secret_id' must print an ARN.)"
+    exit 1
+    ;;
+esac
+
+REGION=$(terraform -chdir=.. output -raw region 2>/dev/null || true)
+case "$REGION" in
+  [a-z][a-z]-[a-z]*-[0-9]) REGION_ARG=(--region "$REGION") ;;
+  *) REGION_ARG=() ;;            # fall back to the caller's configured region
+esac
 echo "    $SECRET_ARN"
 
 echo "==> Reading the admin password (username is 'admin')"
