@@ -6,7 +6,7 @@ This is not a sketch. It was deployed in `eu-west-1` and taken all the way to a
 mounted `ReadWriteMany` PVC, and every number below was observed rather than
 assumed.
 
-> ### Re-verified on WEKA 5.1.32.19 — **four times**: twice 2026-09-29, 2026-10-22, 2026-10-23.
+> ### Re-verified on WEKA 5.1.32.19 — **five times**: twice 2026-09-29, 2026-10-22, and twice 2026-10-23.
 >
 > This table was previously a 4.4.37 run carrying a warning that 5.1 was
 > unmeasured. It has now been deployed from empty **three times** on
@@ -29,6 +29,13 @@ assumed.
 > `fill-secrets.sh` were driven end to end, and `weka alerts` finally
 > explained the alert count. It also produced a fresh mistake worth keeping —
 > see the two gaps at the end.
+>
+> **Run 5 closed those gaps' fixes and the last open question.** The three
+> code paths run 4 had to ship untested were each exercised against a live
+> cluster, beat 2 ran for real again (9m24s end to end, five beats, exit 0),
+> and the `NoCgroupsConfigured` alert was finally traced to its cause rather
+> than left as a guess. **There is now nothing on this page resting on
+> inspection alone.**
 >
 > What did **not** change from 4.4.37 either: the HugePages figure, the CPU
 > pinning, the `weka-nics` count, the quota enforcement and the PV
@@ -66,7 +73,8 @@ assumed.
 | Beat 2 needs a **recycled** node group | The negative case cannot be shown on a node group that has already run the NIC policy. The data-path ENIs are released only when the node **terminates**, not when the `WekaPolicy` is deleted, so the nodes keep advertising `weka.io/weka-nics` and the client schedules immediately. Run 3 hit this: `demo.sh` correctly detected it, then waited the full 900 s anyway and asserted the beat had proved its point. Both defects fixed — the wait is now skipped and the summary reports `NOT DEMONSTRATED` |
 | Account-level `AutoStop` | Not this repo's doing, and worth checking before you deploy anywhere shared. The account used for run 3 runs an `AutoTag` Lambda (every 15 min) that stamps `AllowStop=6` on any instance lacking `AllowStop`/`PreventStop`, and an `AutoStop` Lambda (every 10 min) that stops anything past that deadline. All 9 instances were tagged within 15 minutes of launch. **Tighter than `ttl_hours = 8`**, and because the backends are `i3en` instance-store, a stop is **data loss, not a pause**. See [Cost controls](cost-controls.md) |
 | Cluster alerts | **Explained on run 4 — all five are expected, none indicate a fault.** `active_alerts_count` is **2** on a freshly formed cluster and **5** once three clients join; both figures reproduced exactly across runs 3 and 4, so the pattern is systematic. Reading `weka alerts` finally identified them: the baseline two are `NoClusterLicense` and `SystemDefinedTLS`, both timestamped at cluster formation and both correct for an unlicensed POC with an auto-generated certificate. The other three are **one `NoCgroupsConfigured` per client node**, timestamped at client join and naming the EKS workers by host id. 2 + 3 = 5. (`weka alerts` also shows a COUNT column — 6 for the cgroups alert — which counts occurrences, not distinct alerts, and does not line up with `active_alerts_count`.) |
-| `NoCgroupsConfigured` on the client nodes | Worth a second look rather than dismissing. WEKA reports `has no cgroup configured. The host configuration is NONE` for every EKS worker running a client container, while this repo goes to considerable lengths over CPU isolation on those same nodes — HugePages reserved at boot, `cpuManagerPolicy: static`, and CPU 0 plus its HyperThreading sibling held out of the shared pool via `reservedSystemCPUs`. Nothing misbehaved on any run and no figure moved, so this is **not** a known problem; it is an unexamined interaction between the node preparation and what WEKA expects of a host. Nobody has yet checked whether the client's cores are actually isolated the way `node-userdata.tf` intends |
+| `NoCgroupsConfigured` on the client nodes | **Examined on run 5. The alert is not about the node, and the CPU pinning does work.** The node runs **cgroup v2** (`stat -fc %T /sys/fs/cgroup` = `cgroup2fs`), kubelet's CPU manager is `static`, and the client container is confined by a real cpuset cgroup under `/sys/fs/cgroup/kubepods.slice/…/cpuset.cpus.effective`. `cpu_manager_state` on the node shows `"weka-container":"1-5,17-20"` against a `defaultCpuSet` of `6-15,21-31` — so CPUs **0 and 16 appear in neither**, which is `reservedSystemCPUs` working exactly as `node-userdata.tf` intends (`cpu0` reports siblings `0,16`, confirming `system_cpu_sibling_index = 16`). What WEKA is reporting is the absence of **its own** cgroup configuration, not the host's |
+| Client CPUs are only **partly** HT-isolated | A real gap, found while checking the above, and not something any run would have surfaced on its own. The container holds 9 CPUs — `1-5,17-20` — and the sibling pairs are `(1,17) (2,18) (3,19) (4,20)`: four complete physical cores, plus **CPU 5 on its own**. CPU 5's sibling is **21**, which sits in `defaultCpuSet` and is therefore available to general workloads. So one WEKA thread shares a physical core, and its L1 and L2, with whatever the scheduler puts on CPU 21. That is precisely the interference `preflight.tf` describes when it guards the CPU 0/16 pair — the repo prevents it for the kubelet and an odd-sized allocation reintroduces it elsewhere. Nothing measured slower because of it, and no figure on this page moved; it is recorded as a real property of the current sizing, not a fault |
 
 Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 (first attempt clean — no `InsufficientRolePermissions` race this time),
@@ -112,18 +120,21 @@ Everything this section previously listed as unverified was exercised on
 The skip is worth real time: the same demo took **26m14s** when beat 2 waited
 out its 900-second timeout, and **2m17s** when it skipped.
 
-> **Both gaps below were fixed on 2026-10-23, after the cluster was already
-> being destroyed.** The logic each fix can be tested without a cluster has
-> been tested; the parts that need a live one have not. Specifically: the new
-> applied-object checks in `check-manifests.sh` and the new secret preflight
-> in `demo.sh` only run against a real cluster, and `fill-secrets.sh`'s
-> endpoints lookup needs Terraform state. What *was* verified: shellcheck and
-> `bash -n` clean, the offline check still green, and the IP-to-endpoints
-> transformation exercised against four input shapes — the current
-> `--output text` format, a JSON format in case the upstream output changes,
-> a single-backend input and an empty one, with the last two correctly
-> rejected. **Treat the live paths as unproven until the next deployment**,
-> and run them early as the previous version of this section advised.
+> **Both gaps below were fixed on 2026-10-23 and the fixes were verified on
+> run 5 the same day.** They shipped untested because the cluster was already
+> being destroyed; run 5 existed to close that, and did. Each path was
+> exercised in the only state that can exercise it:
+>
+> | Path | How it was proven |
+> |---|---|
+> | Applied-object checks | All three branches: `no 01-…yaml yet` with the file absent, `not applied yet (kubectl apply -f …)` with it filled but unapplied, `applied` once applied |
+> | `demo.sh` secret preflight | Refused **twice**, exit 1 — first naming `weka-client-secret`, then after applying it, naming `csi-wekafs-api-secret`. Under a second each, against the 26 minutes the same missing secret cost on run 4 |
+> | `fill-secrets.sh` endpoints | Wrote the live cluster's own three backend addresses, `<ip>:14000` each, verified by decoding the base64 back out of `04` and diffing against `terraform output -raw weka_backend_ips_command \| bash` — in place of the template's `10.0.1.10`. (Deliberately not quoting the addresses here: they belonged to a cluster that no longer exists, and this page should not hand the next reader dead infrastructure detail.) |
+>
+> The preflight also earned its place unprompted: it found `01` and `04` left
+> on disk from run 4, with `endpoints` still pointing at that destroyed
+> cluster's backends — the stale-credential trap
+> [Deploying](deployment.md) warns about, surfaced without being looked for.
 
 ## Gap 1: nothing checks that the manifests are actually APPLIED
 

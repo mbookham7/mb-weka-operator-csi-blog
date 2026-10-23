@@ -258,7 +258,7 @@ missing HugePages reservation is far easier to diagnose here than as a Pending
 pod later:
 
 ```bash
-# Expect ~6Gi per node, not 0
+# Expect 7Gi per node, not 0 (3584 x 2MiB -- terraform output manifest_values is authoritative)
 kubectl get nodes -o json \
   | jq -r '.items[] | "\(.metadata.name)  hugepages-2Mi=\(.status.allocatable["hugepages-2Mi"])"'
 ```

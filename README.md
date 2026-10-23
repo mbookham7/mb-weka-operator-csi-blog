@@ -71,7 +71,7 @@ graph TB
     subgraph VPC["VPC 10.0.0.0/16 &nbsp;&nbsp;·&nbsp;&nbsp; shared security group: TCP+UDP 14000-16059, self-referencing"]
         subgraph AZA["Availability Zone A &nbsp;·&nbsp; private subnet 10.0.0.0/20"]
             WEKA["<b>WEKA backend cluster</b><br/>6 × i3en.6xlarge<br/>autoscaling group + Step Function<br/>drives / compute / frontend containers<br/>REST API :14000"]
-            N1["<b>EKS node</b> m6i.8xlarge<br/>label weka.io/supports-clients=true<br/>HugePages 3072×2MiB · CPUs 0,16 reserved<br/>WekaClient pod (hostNetwork)<br/>CSI node plugin"]
+            N1["<b>EKS node</b> m6i.8xlarge<br/>label weka.io/supports-clients=true<br/>HugePages 3584×2MiB (7Gi) · CPUs 0,16 reserved<br/>WekaClient pod (hostNetwork)<br/>CSI node plugin"]
         end
         subgraph AZB["Availability Zone B &nbsp;·&nbsp; private subnet 10.0.16.0/20"]
             N2["<i>EKS cluster subnet only</i><br/>no worker nodes here —<br/>the node group is pinned to AZ A"]
