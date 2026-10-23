@@ -2,6 +2,35 @@
 
 *[← back to the README](../README.md)*
 
+> ### What on this page is measured, and what is not
+>
+> [Verified end to end](verified.md) is careful to separate what was observed
+> from what was assumed. This page is not that kind of document, and the
+> difference is worth stating rather than leaving for you to discover.
+>
+> **Exercised by every deployment:** `hostNetwork` and its NetworkPolicy
+> consequence, the wide `14000–16059` union on TCP **and** UDP, the REST API
+> on `14000`, and the DPDK data path needing dedicated ENIs — the last of
+> these is the whole of beat 2 in the demo.
+>
+> **Never exercised here:**
+>
+> - **The narrow per-role port rules.** The breakdown below (drives
+>   `14000–14059`, compute `15000–15059`, frontend `16000–16059`) comes from
+>   WEKA's documentation, not from this repo. `security-groups.tf` keeps the
+>   narrow form **commented out** and every run has opened the union, so a
+>   rule set built from it has never been applied, let alone proven
+>   sufficient. Narrow it on a cluster you can afford to break first.
+> - **The MTU guidance.** Nothing in this repo sets an MTU — `grep -ri mtu`
+>   over the Terraform and the manifests returns nothing. The advice below is
+>   sound and conventional, but it is inherited, and this deployment runs on
+>   whatever the AWS default gives it.
+> - **Pause frames.**
+>
+> None of that makes the guidance wrong. It means it has a different
+> provenance from the figures in `verified.md`, and you should weigh it
+> accordingly.
+
 ## WEKA runs `hostNetwork: true`, so NetworkPolicy does not apply
 
 The `WekaClient` container uses the host network namespace. Its traffic never
