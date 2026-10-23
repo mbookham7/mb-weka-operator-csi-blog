@@ -230,6 +230,41 @@ elif kubectl version --request-timeout=8s >/dev/null 2>&1; then
       printf '  MISSING %-42s run ./00-namespace-and-secrets.sh first\n' "crd $crd"; fail=1; missing=1
     fi
   done
+
+  # APPLIED, not merely present on disk.
+  #
+  # Everything else in this script compares FILES -- to Terraform, and to each
+  # other. That is a different question from "is the cluster actually carrying
+  # these objects", and the gap between them cost 25 minutes on 2026-10-23:
+  # 01 and 04 were filled in correctly, this script went fully green, and the
+  # secrets had never been applied. The client pods then sat in
+  # ContainerCreating for 24 minutes, the CSI plugins went CrashLoopBackOff
+  # reporting "No frontends found in driver interface", and the visible
+  # symptom was a Pending PVC three steps downstream. The actual cause was one
+  # event on the client pod: MountVolume.SetUp failed ... secret
+  # "weka-client-secret" not found.
+  #
+  # These are reported as NOTE rather than MISSING when the file exists but
+  # the object does not, because that is a legitimate mid-walkthrough state --
+  # you have filled the file in and not applied it yet. It is only wrong if
+  # you are about to run something that needs it, which is why demo.sh checks
+  # the same objects and refuses to start.
+  for pair in "secret/weka-client-secret:01-weka-client-secret.yaml" \
+              "secret/csi-wekafs-api-secret:04-csi-api-secret.yaml" \
+              "storageclass/weka-dir:05-storageclass-dir.yaml"; do
+    obj="${pair%%:*}"; src="${pair##*:}"
+    case "$obj" in
+      secret/*)       q=(-n weka-operator-system get "$obj") ;;
+      storageclass/*) q=(get "$obj") ;;
+    esac
+    if kubectl "${q[@]}" >/dev/null 2>&1; then
+      printf '  OK    %-44s applied\n' "$obj"
+    elif [ -f "$src" ]; then
+      printf '  NOTE  %-44s not applied yet (kubectl apply -f %s)\n' "$obj" "$src"
+    else
+      printf '  NOTE  %-44s no %s yet\n' "$obj" "$src"
+    fi
+  done
 else
   printf '  NOTE  %-44s skipping cluster checks\n' "kubectl not reachable"
 fi

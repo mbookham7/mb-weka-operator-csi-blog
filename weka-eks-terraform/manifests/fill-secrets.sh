@@ -65,6 +65,37 @@ echo "    got it (${#PW} chars, not printed)"
 # printf, never echo -- see the header.
 PW_B64=$(printf '%s' "$PW" | base64)
 
+# -----------------------------------------------------------------------------
+# 04's endpoints
+# -----------------------------------------------------------------------------
+# Filling the password and the token but not this is how you end up with a
+# credential file that is complete, consistent, and wrong: `endpoints` keeps
+# whatever the .example ships (10.0.1.10:14000 and friends), pointing the CSI
+# controller at addresses that do not exist. check-manifests.sh will not catch
+# it either -- it looks for REPLACE_ME, and placeholder endpoints are
+# valid-looking base64 of a plausible address.
+#
+# Backend IPs are not a Terraform output: the backends sit in an autoscaling
+# group the module's healing Lambdas can replace, so the addresses are not
+# known at plan time. weka_backend_ips_command emits the lookup instead.
+echo "==> Resolving backend IPs for 04's endpoints"
+IPS_CMD=$(terraform -chdir=.. output -raw weka_backend_ips_command 2>/dev/null || true)
+[ -n "$IPS_CMD" ] || { echo "FAILED: no weka_backend_ips_command output"; exit 1; }
+
+# grep the addresses out rather than trusting the command's formatting, so a
+# change from --output text to json upstream does not silently produce an
+# endpoints string made of JSON punctuation.
+IPS=$(printf '%s\n' "$IPS_CMD" | bash 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -3)
+COUNT=$(printf '%s\n' "$IPS" | grep -c . || true)
+[ "$COUNT" -ge 2 ] || {
+  echo "FAILED: found $COUNT backend IP(s); the CSI secret wants at least 2."
+  echo "        Is the cluster up? Try: terraform output -raw weka_backend_ips_command | bash"
+  exit 1
+}
+ENDPOINTS=$(printf '%s\n' "$IPS" | sed 's/$/:14000/' | paste -sd, -)
+echo "    $ENDPOINTS"
+ENDPOINTS_B64=$(printf '%s' "$ENDPOINTS" | base64)
+
 echo "==> The join token is generated ON a backend, authenticated:"
 echo "      weka cluster join-token generate --access-token-timeout 52w"
 printf '    Paste it here (not echoed): '
@@ -81,6 +112,10 @@ done
 sed -i.bak "s#^  join-secret: .*#  join-secret: ${TOKEN_B64}#" 01-weka-client-secret.yaml
 rm -f 01-weka-client-secret.yaml.bak
 echo "    filled join-secret in 01-weka-client-secret.yaml"
+
+sed -i.bak "s#^  endpoints: .*#  endpoints: ${ENDPOINTS_B64}#" 04-csi-api-secret.yaml
+rm -f 04-csi-api-secret.yaml.bak
+echo "    filled endpoints in 04-csi-api-secret.yaml"
 
 echo "==> Verifying no placeholders remain"
 if grep -l "REPLACE_ME\|UkVQTEFDRV" 01-weka-client-secret.yaml 04-csi-api-secret.yaml 2>/dev/null; then

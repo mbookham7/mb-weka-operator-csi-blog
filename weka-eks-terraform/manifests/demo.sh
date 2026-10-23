@@ -223,6 +223,28 @@ kubectl get namespace "$NS" >/dev/null 2>&1 \
 kubectl get storageclass weka-dir >/dev/null 2>&1 \
   || die "storageclass weka-dir not found -- apply 05-storageclass-dir.yaml first"
 
+# The two secrets, checked here rather than discovered at beat 3.
+#
+# Beat 2 deletes and re-applies 02 and 03, so it is legitimate -- and for a
+# clean beat 2, necessary -- to start with those two unapplied. It is NOT
+# legitimate to start without 01 and 04, and on 2026-10-23 that distinction
+# was missed: the demo ran 26 minutes and failed at beat 5, because the
+# WekaClient pod could not mount a secret that had never been applied.
+#
+# Nothing surfaced the real cause. The client pods showed ContainerCreating,
+# the CSI plugins showed CrashLoopBackOff, and the beat that actually failed
+# reported a Pending PVC. Two seconds of checking here is worth more than any
+# amount of log-reading there.
+kubectl -n "$NS" get secret weka-client-secret >/dev/null 2>&1 \
+  || die "secret weka-client-secret not found -- apply 01-weka-client-secret.yaml first.
+       The WekaClient pod mounts it, and without it the pod sits in
+       ContainerCreating while the CSI plugins crashloop and beat 3 fails
+       with a Pending PVC that looks like a storage problem."
+kubectl -n "$NS" get secret csi-wekafs-api-secret >/dev/null 2>&1 \
+  || die "secret csi-wekafs-api-secret not found -- apply 04-csi-api-secret.yaml first.
+       The CSI controller calls the WEKA REST API with it; without it no PVC
+       will ever bind."
+
 printf '\nContext: %s\n' "$(kubectl config current-context)"
 [ "$PAUSE" -eq 1 ] && printf 'Paused between beats. --no-pause to run straight through.\n'
 

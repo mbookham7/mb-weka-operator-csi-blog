@@ -6,7 +6,7 @@ This is not a sketch. It was deployed in `eu-west-1` and taken all the way to a
 mounted `ReadWriteMany` PVC, and every number below was observed rather than
 assumed.
 
-> ### Re-verified on WEKA 5.1.32.19 — **three times**: twice 2026-09-29, again 2026-10-22.
+> ### Re-verified on WEKA 5.1.32.19 — **four times**: twice 2026-09-29, 2026-10-22, 2026-10-23.
 >
 > This table was previously a 4.4.37 run carrying a warning that 5.1 was
 > unmeasured. It has now been deployed from empty **three times** on
@@ -22,6 +22,13 @@ assumed.
 > Run 3 also corrected two things this page and its siblings had wrong, both
 > recorded in their own rows below: the **Secrets Manager naming**, and the
 > claim that a reserved secret name blocks a re-apply.
+>
+> **Run 4 existed to exercise what runs 1–3 had only inspected**, and it
+> closed every open item on this page: beat 2 ran for real *and* took its skip
+> path in the same session, the live-mode failure footer and
+> `fill-secrets.sh` were driven end to end, and `weka alerts` finally
+> explained the alert count. It also produced a fresh mistake worth keeping —
+> see the two gaps at the end.
 >
 > What did **not** change from 4.4.37 either: the HugePages figure, the CPU
 > pinning, the `weka-nics` count, the quota enforcement and the PV
@@ -57,7 +64,8 @@ assumed.
 | Secret names do **not** block a re-apply | The docs claimed the 30-day reservation meant you could not re-apply under the same `prefix`/`cluster_name` inside the window. **False, and disproved directly on run 3**: four secrets from the 2026-09-29 teardown were still in their deletion window when run 3 applied under the *same* prefix and cluster name, created its own set with a different suffix, and succeeded. Both sets coexisted in the account. The random suffix makes collisions impossible, so purge for tidiness, not necessity |
 | Beat 2 needs a **recycled** node group | The negative case cannot be shown on a node group that has already run the NIC policy. The data-path ENIs are released only when the node **terminates**, not when the `WekaPolicy` is deleted, so the nodes keep advertising `weka.io/weka-nics` and the client schedules immediately. Run 3 hit this: `demo.sh` correctly detected it, then waited the full 900 s anyway and asserted the beat had proved its point. Both defects fixed — the wait is now skipped and the summary reports `NOT DEMONSTRATED` |
 | Account-level `AutoStop` | Not this repo's doing, and worth checking before you deploy anywhere shared. The account used for run 3 runs an `AutoTag` Lambda (every 15 min) that stamps `AllowStop=6` on any instance lacking `AllowStop`/`PreventStop`, and an `AutoStop` Lambda (every 10 min) that stops anything past that deadline. All 9 instances were tagged within 15 minutes of launch. **Tighter than `ttl_hours = 8`**, and because the backends are `i3en` instance-store, a stop is **data loss, not a pause**. See [Cost controls](cost-controls.md) |
-| Cluster alerts | **Open — not explained.** `active_alerts_count` was **2** on a freshly formed cluster and **5** once the three clients joined. Nothing misbehaved: `status: OK`, `io_status: STARTED`, the PVC mounted and the data round-tripped. The alert *text* was never read on run 3, so what the five are is unknown. Recorded as a gap rather than guessed at |
+| Cluster alerts | **Explained on run 4 — all five are expected, none indicate a fault.** `active_alerts_count` is **2** on a freshly formed cluster and **5** once three clients join; both figures reproduced exactly across runs 3 and 4, so the pattern is systematic. Reading `weka alerts` finally identified them: the baseline two are `NoClusterLicense` and `SystemDefinedTLS`, both timestamped at cluster formation and both correct for an unlicensed POC with an auto-generated certificate. The other three are **one `NoCgroupsConfigured` per client node**, timestamped at client join and naming the EKS workers by host id. 2 + 3 = 5. (`weka alerts` also shows a COUNT column — 6 for the cgroups alert — which counts occurrences, not distinct alerts, and does not line up with `active_alerts_count`.) |
+| `NoCgroupsConfigured` on the client nodes | Worth a second look rather than dismissing. WEKA reports `has no cgroup configured. The host configuration is NONE` for every EKS worker running a client container, while this repo goes to considerable lengths over CPU isolation on those same nodes — HugePages reserved at boot, `cpuManagerPolicy: static`, and CPU 0 plus its HyperThreading sibling held out of the shared pool via `reservedSystemCPUs`. Nothing misbehaved on any run and no figure moved, so this is **not** a known problem; it is an unexamined interaction between the node preparation and what WEKA expects of a host. Nobody has yet checked whether the client's cores are actually isolated the way `node-userdata.tf` intends |
 
 Timings measured on this 5.1.32.19 run: **~13 min** for `terraform apply`
 (first attempt clean — no `InsufficientRolePermissions` race this time),
@@ -87,30 +95,89 @@ minutes at the end.
 
 ---
 
-# Run these first on the next deployment
+# What run 4 settled, and the two gaps it opened
 
-Everything in the table above was observed. The items below were **not**, and
-they are listed here so the next run does not have to rediscover which parts
-of the repo are still taking a claim on trust.
+Everything this section previously listed as unverified was exercised on
+2026-10-23 and is now folded into the table above. For the record, because
+"we ran it" is worth less than what the run actually showed:
 
-They share one property: each needs a **live cluster**, so each is cheap while
-one is up and impossible once it is gone. Do them early, before the demo and
-well before teardown — the cost clock is the reason they got skipped last
-time.
-
-| Run this | Why it is still open |
+| Was open | Outcome |
 |---|---|
-| `weka alerts`, on a backend, right after the clients join | `active_alerts_count` was **2** on a freshly formed cluster and **5** once the three clients joined. Nothing misbehaved — `status: OK`, `io_status: STARTED`, the PVC mounted and the data round-tripped — but the alert *text* was never read, so what the five are is unknown. One command settles it |
-| `./demo.sh` beat 2, on a **recycled** node group | The 2026-10-22 fixes to beat 2 — skipping the wait when the beat cannot run, treating a timed-out wait as a failure rather than a pass, and printing `NOT DEMONSTRATED` — have only been syntax-checked. The paths that matter have never executed. A node group that has never had the NIC policy applied is the only state that exercises them |
-| `./fill-secrets.sh`, for real | Its *failure* path is verified (empty state exits 1 with a clear message). Its success path — reading the secret, prompting for the token, writing both files — has never run as committed. The version used on 2026-10-22 was an earlier one with a hardcoded ARN |
-| `./check-manifests.sh` **without** `--offline`, with something genuinely missing | The script has two failure footers. The offline one is verified both ways; the live one is not, because it needs Terraform state *and* a real missing prerequisite at the same time. Deleting the operator namespace before re-running it would do it |
+| `weka alerts` | Read. All five alerts identified and expected — see the two alert rows above |
+| Beat 2's 2026-10-22 fixes | **Both paths exercised in one session.** On a pristine node group it produced the real refusal, `0/3 nodes are available: 1 Insufficient weka.io/weka-nics`. On the rerun, with the ENIs now attached, it took the skip path and the summary said `NOT DEMONSTRATED`. A fix that only ever skipped would have looked identical on the second run alone; running both is what proves it discriminates |
+| `fill-secrets.sh` success path | Drove both files correctly, password never displayed |
+| Live-mode failure footer | Printed the `MISSING prerequisite` line alone, with no `DRIFT` line, because no drift had occurred |
 
-The lesson behind this list, recorded because it is the kind of thing this
-page exists for: on 2026-10-22 four changes were committed on a `bash -n`
-syntax check and called done. Two of them had real bugs — `terraform output
--raw` exiting 0 with no outputs, and a second failure footer nobody had
-looked at — and both surfaced within minutes of actually being run. A syntax
-check is not a test, and this repo's whole premise is not claiming otherwise.
+The skip is worth real time: the same demo took **26m14s** when beat 2 waited
+out its 900-second timeout, and **2m17s** when it skipped.
+
+> **Both gaps below were fixed on 2026-10-23, after the cluster was already
+> being destroyed.** The logic each fix can be tested without a cluster has
+> been tested; the parts that need a live one have not. Specifically: the new
+> applied-object checks in `check-manifests.sh` and the new secret preflight
+> in `demo.sh` only run against a real cluster, and `fill-secrets.sh`'s
+> endpoints lookup needs Terraform state. What *was* verified: shellcheck and
+> `bash -n` clean, the offline check still green, and the IP-to-endpoints
+> transformation exercised against four input shapes — the current
+> `--output text` format, a JSON format in case the upstream output changes,
+> a single-backend input and an empty one, with the last two correctly
+> rejected. **Treat the live paths as unproven until the next deployment**,
+> and run them early as the previous version of this section advised.
+
+## Gap 1: nothing checks that the manifests are actually APPLIED
+
+Run 4 deliberately skipped `02` and `03` so that beat 2 would have a clean
+node group — `demo.sh` applies both itself. It also skipped `01` and `04`,
+which was simply wrong: `demo.sh`'s header says "everything **through**
+`05-storageclass-dir.yaml` applied", and that includes the two secrets.
+
+The cost of that one-line mistake was about 25 minutes, and almost none of it
+looked like a missing secret:
+
+- client pods sat in `ContainerCreating` for 24 minutes
+- the CSI controller and all three node plugins went `CrashLoopBackOff`
+- the only honest message was buried in the CSI log: `No frontends found in
+  driver interface, client software may not be running`
+- the visible symptom was a `Pending` PVC and a failed persistence check,
+  three beats downstream
+
+The actual cause was one event on the client pod: `MountVolume.SetUp failed
+for volume "weka-credentials" : secret "weka-client-secret" not found`.
+
+**`./check-manifests.sh` passed, fully green, immediately before this.** That
+is not a bug in it — it compares manifest *files* against Terraform and has
+no notion of cluster state — but it does mean a green check reads as "ready
+to go" when it cannot see the thing that was wrong. `demo.sh` checked only
+for the StorageClass. A preflight asserting the objects it needs are
+*present* would have failed in a second instead of twenty minutes.
+
+**Fixed both ends.** `check-manifests.sh` now reports whether
+`weka-client-secret`, `csi-wekafs-api-secret` and the `weka-dir` StorageClass
+are actually applied, as `NOTE` rather than `MISSING` — a filled-in file that
+has not been applied yet is a legitimate mid-walkthrough state, not an error.
+`demo.sh` makes the same check a hard `die`, because by the time it runs it is
+not legitimate: it names the file to apply and says what the failure would
+otherwise have looked like three beats later.
+
+## Gap 2: `fill-secrets.sh` does not set `04`'s `endpoints`
+
+It fills the password in both files and the join token in `01`, and stops
+there. `endpoints` in `04-csi-api-secret.yaml` keeps whatever the `.example`
+ships — `10.0.1.10:14000` and friends — which points the CSI plugin at
+addresses that do not exist.
+
+It was set by hand on runs 3 and 4, so neither run caught it as a failure.
+Nothing would have: `check-manifests.sh` looks for `REPLACE_ME`, and the
+placeholder endpoints are valid-looking base64 of a plausible address. The
+two tools together let you ship a credential file that was complete,
+consistent, and wrong.
+
+**Fixed.** `fill-secrets.sh` now resolves the backend IPs via
+`weka_backend_ips_command` and writes `endpoints` itself. It greps the
+addresses out of that command's output rather than trusting its formatting,
+so a future change from `--output text` to JSON upstream cannot quietly
+produce an endpoints string made of punctuation, and it refuses to write
+fewer than two endpoints.
 
 ---
 
