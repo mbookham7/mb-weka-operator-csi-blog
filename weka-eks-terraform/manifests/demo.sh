@@ -296,7 +296,7 @@ if kubectl get nodes -l "$NODE_LABEL" -o json \
   printf '  Recycle the node group for a clean take.\n'
   printf '\n'
   printf '  Beat 2 cannot run from this state, so the wait below is SKIPPED\n'
-  printf '  rather than spending %%ss waiting for a refusal that cannot come.\n' "$PENDING_TIMEOUT"
+  printf '  rather than spending %ss waiting for a refusal that cannot come.\n' "$PENDING_TIMEOUT"
 fi
 
 pause "apply the WekaClient with no NIC policy"
