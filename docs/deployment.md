@@ -506,20 +506,38 @@ then have to strip by hand.
 >
 >   So purge them for tidiness, not because anything depends on it. The one
 >   real consequence of skipping it is clutter: each teardown leaves five more
->   entries loitering for 30 days. To get a name back immediately you need
->   the **two-call** form. `--force-delete-without-recovery` on its own is
->   unreliable against a secret already in a deletion window: across two
->   teardowns it sometimes deleted and sometimes returned success while only
->   re-stamping `DeletedDate`. Restoring first makes it deterministic, and
->   restoring an already-deleted secret is harmless:
+>   entries loitering for 30 days.
 >
 >   ```bash
->   aws secretsmanager restore-secret --secret-id <id>
->   aws secretsmanager delete-secret  --secret-id <id> --force-delete-without-recovery
+>   aws secretsmanager delete-secret --secret-id <id> --force-delete-without-recovery
+>   sleep 2
 >   aws secretsmanager describe-secret --secret-id <id>   # want ResourceNotFoundException
 >   ```
 >
->   `list-secrets` lags behind the delete; `describe-secret` is the honest check.
+>   **This page previously prescribed a "two-call" form — `restore-secret`
+>   first, then force-delete — on the grounds that force-delete alone was
+>   unreliable and restoring first made it deterministic. Purging 12 secrets
+>   on 2026-10-23 contradicted that on both counts:**
+>
+>   | Claim | What 12 secrets showed |
+>   |---|---|
+>   | "restoring an already-deleted secret is harmless" | `restore-secret` **fails** against a secret already in its deletion window: `ResourceNotFoundException`, every time. Harmless in effect, but it is not a no-op — under `set -e` it aborts the script before the delete ever runs |
+>   | force-delete alone is unreliable | It **worked on all 12, first call.** Each returned the ARN and a fresh `DeletionDate`, and each was genuinely gone |
+>
+>   The earlier observation (run 1: 3 of 4 secrets survived a force-delete)
+>   is left on the record rather than overwritten — it may have been a
+>   different condition. But the step that was supposed to make it
+>   deterministic is the step that does not work, so the restore is dropped.
+>
+>   **`describe-secret` is not instantaneous either, and that matters more
+>   than it sounds.** Checking immediately after a force-delete reported the
+>   secret as *still present* for all 12, when all 12 were already gone — a
+>   re-check moments later returned `ResourceNotFoundException` for every one.
+>   So the verification step gave a false negative twelve times out of twelve.
+>   Give it a moment, and re-check before believing a purge failed.
+>
+>   `list-secrets` lags further still. Between the two, `describe-secret` is
+>   the better check — but "honest" overstates it.
 > - **DynamoDB** — the cluster state table
 > - **Lambda and Step Functions** — the deploy/scale/status functions
 > - **CloudWatch log groups** — cheap, but they accumulate
