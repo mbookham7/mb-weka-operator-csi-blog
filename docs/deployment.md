@@ -510,7 +510,14 @@ then have to strip by hand.
 >
 >   ```bash
 >   aws secretsmanager delete-secret --secret-id <id> --force-delete-without-recovery
->   sleep 2
+>
+>   # Poll -- do not use a fixed sleep. Measured settling times vary from a
+>   # few seconds to over five, so any single pause you pick will sometimes
+>   # be too short and report a working delete as a failure.
+>   for i in $(seq 1 10); do
+>     aws secretsmanager describe-secret --secret-id <id> >/dev/null 2>&1 || break
+>     sleep 3
+>   done
 >   aws secretsmanager describe-secret --secret-id <id>   # want ResourceNotFoundException
 >   ```
 >
@@ -534,7 +541,12 @@ then have to strip by hand.
 >   secret as *still present* for all 12, when all 12 were already gone — a
 >   re-check moments later returned `ResourceNotFoundException` for every one.
 >   So the verification step gave a false negative twelve times out of twelve.
->   Give it a moment, and re-check before believing a purge failed.
+>
+>   **The settling time is not constant, so do not paper over it with a fixed
+>   sleep.** This page briefly recommended `sleep 2`. A later purge of four
+>   secrets still reported all four as present after **five** seconds, and
+>   they were gone a few seconds after that. Poll until it clears, as above,
+>   and never conclude a purge failed from a single immediate check.
 >
 >   `list-secrets` lags further still. Between the two, `describe-secret` is
 >   the better check — but "honest" overstates it.
