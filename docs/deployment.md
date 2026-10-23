@@ -585,12 +585,19 @@ then have to strip by hand.
 > | second pass | **~40 seconds**, all 5 gone, exit 0 | **14 seconds**, all 5 gone, exit 0 |
 > | slowest single resource | the shared security group, **14m10s** | the EKS node group, **8m21s** |
 >
-> Two runs, three weeks apart: the overall shape is stable to within ten
-> seconds on a 22-minute operation, and the five leftovers are identical. What
-> is *not* stable is which resource dominates — the security group took 14m10s
-> on the first run and the EKS node group 8m21s on the second. Treat the total
-> and the leftover set as reproducible; treat the per-resource ranking as
-> incidental to whatever else was still draining at the time.
+> **Five runs now, and the first-pass duration is bimodal: ~22.5 minutes or
+> ~11.** The swing factor is the shared security group, which took 14m10s and
+> 13m50s on the slow runs and **1 second** on both fast ones. The EKS node
+> group is a near-constant ~8 minutes and never decides the outcome.
+>
+> That makes sense mechanically: the security group cannot be deleted until
+> every ENI referencing it is gone — the backends, the EKS nodes *and* the
+> Secrets Manager endpoint — so what matters is whether Terraform attempts it
+> before or after the node group has finished releasing them. A scheduling
+> race, not a property of your deployment, and not something you can
+> influence. Budget 25 minutes; be pleased when it is 11.
+>
+> The leftover set is identical every time, and the second pass is 14 seconds.
 >
 > **Expect exactly this on the first `destroy`:**
 >
