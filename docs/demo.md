@@ -62,6 +62,37 @@ the extended resource is still on the node, the client in beat 2 schedules
 immediately and there is no negative case to show; you need to recycle the node
 group for a clean take. Everything else in the demo works regardless.
 
+**The script now acts on that check rather than just printing it.** If the
+nodes still advertise the resource, beat 2 is **skipped** — it does not spend
+`PENDING_TIMEOUT` (900s by default) waiting for a refusal that cannot come,
+and the closing summary says `2  NOT DEMONSTRATED on this run` instead of
+asserting the beat proved its point. Both behaviours were measured on
+2026-10-23: the same demo took **26m14s** when it waited out the timeout and
+**2m17s** when it skipped, and in a separate run on a freshly built node group
+beat 2 produced the real refusal, `0/3 nodes are available: 1 Insufficient
+weka.io/weka-nics`. A run where beat 2 is skipped is not a failed run; it is
+a run that declines to claim something it did not show.
+
+## What `demo.sh` refuses to start without
+
+Beat 2 deletes and re-applies `02` and `03`, so it is legitimate — and for a
+clean beat 2, necessary — to begin with those two unapplied. It is **not**
+legitimate to begin without the two secrets, and the script now checks:
+
+| Missing | What `demo.sh` does |
+|---|---|
+| namespace `weka-operator-system` | dies, pointing at `00-namespace-and-secrets.sh` |
+| StorageClass `weka-dir` | dies, pointing at `05-storageclass-dir.yaml` |
+| secret `weka-client-secret` | dies, pointing at `01-weka-client-secret.yaml` |
+| secret `csi-wekafs-api-secret` | dies, pointing at `04-csi-api-secret.yaml` |
+
+These exist because of a real incident. On 2026-10-23 the demo was started
+with `01` and `04` filled in but never applied; it ran for 26 minutes and
+failed at beat 5, having shown client pods in `ContainerCreating`, five CSI
+pods in `CrashLoopBackOff` and a `Pending` PVC — none of which named the
+missing secret. The checks now fail in under a second instead. See
+[Troubleshooting](troubleshooting.md).
+
 ## Performance numbers
 
 `09-fio-job.yaml` ships so that readers can run it on their own cluster. **Its

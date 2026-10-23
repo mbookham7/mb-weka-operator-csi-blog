@@ -137,7 +137,7 @@ to name them:
 │   ├── cost-controls.md          TTL tag and budget alarm
 │   ├── preflight.md              plan-time instance-type guards
 │   ├── demo.md                   the five recorded beats
-│   ├── ci.md                     the three CI jobs and what they assert
+│   ├── ci.md                     the four CI jobs and what they assert
 │   ├── cost-controls.md          TTL tag and budget alarm
 │   └── preflight.md              plan-time instance-type guards
 └── weka-eks-terraform/           all the Terraform lives here
@@ -223,7 +223,7 @@ The detail lives in `docs/`. Start with whichever question you have.
 | Page | What it covers |
 |---|---|
 | **[Demo](docs/demo.md)** | The five recorded beats, what each one proves, and why no performance figures are published |
-| **[Continuous integration](docs/ci.md)** | The three CI jobs, `check-manifests.sh --offline` as a credential-leak check, and the runbook render test |
+| **[Continuous integration](docs/ci.md)** | The four CI jobs, `check-manifests.sh --offline` as a credential-leak check, and the runbook render test |
 | **[Cost controls](docs/cost-controls.md)** | The `ExpiresAt` tag and the daily budget alarm, and what neither of them does |
 | **[Plan-time guards](docs/preflight.md)** | How `preflight.tf` stops node sizing variables silently disagreeing with the instance type |
 
