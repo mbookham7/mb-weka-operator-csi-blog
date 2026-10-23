@@ -172,6 +172,7 @@ to name them:
 | `outputs.tf` | Names, secret ids, and a `next_steps` runbook |
 | `manifests/` | Applied by hand after `apply`, **in numeric order** — `02-weka-nics-policy.yaml` must precede the `WekaClient` |
 | `manifests/check-manifests.sh` | Drift check: compares the manifests against `terraform output manifest_values`. Run it before applying |
+| `manifests/fill-secrets.sh` | Fills the two credential manifests without the password reaching argv, a log, or the terminal |
 
 The manifests, in the order they are applied:
 
@@ -189,6 +190,7 @@ The manifests, in the order they are applied:
 | `09-fio-job.yaml` | Short fio profile against `07`'s volume. **Results are not publishable without an approved WEKA Fact Note** — see the header comment | demo only |
 | `10-poddisruptionbudgets.yaml` | **Defines nothing — do not apply it.** A PDB over the WEKA client pods blocks every eviction instead of pacing a roll; the file records the measurement so nobody re-adds them | read, don't apply |
 | `10-discover-pdb-selector.sh` | Derives a pod selector from a live cluster. Still useful for a PDB over *your own* workloads, which is where one belongs | helper |
+| `fill-secrets.sh` | Fills the admin password and join token into `01` and `04` without echoing either or passing them as argv. Resolves the secret id from Terraform, which is the only reliable way to get it | helper |
 | `demo.sh` | Drives the five demo beats in order, with pauses, for a recording. `--reset` returns to the pre-demo state | demo only |
 
 ---

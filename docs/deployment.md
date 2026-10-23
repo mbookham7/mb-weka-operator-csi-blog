@@ -301,6 +301,13 @@ printf '%s' 'the-value' | base64
 authenticate with a password ending in `\n`. It fails looking exactly like a
 wrong password, so you will not suspect the encoding.
 
+`./fill-secrets.sh` does both files for you and avoids that trap by
+construction: it reads the password from Secrets Manager into a variable
+(resolving the id from Terraform, never reconstructing it), prompts for the
+join token with `read -rs` so it is neither echoed nor kept in shell history,
+and encodes both with `printf`. Neither credential reaches argv, a log, or the
+terminal. You still need the token from a backend first.
+
 **These are two different secrets and they are not interchangeable:**
 
 | | `01-weka-client-secret.yaml` | `04-csi-api-secret.yaml` |
